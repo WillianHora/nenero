@@ -1,0 +1,13 @@
+services:
+  nenero:
+    build:
+      context: .
+      args:
+        EXPO_PUBLIC_SUPABASE_URL: ${EXPO_PUBLIC_SUPABASE_URL}
+        EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY}
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-${EXPO_PUBLIC_GEMINI_API_KEY:-}}
+      PORT: 8080
+    ports:
+      - "${NENERO_PORT:-8080}:8080"
+    restart: unless-stopped

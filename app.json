@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "Nenero",
+    "slug": "nenero",
+    "version": "1.0.0",
+    "icon": "./assets/nenero-icon.png",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "web": {
+      "output": "single",
+      "bundler": "metro",
+      "favicon": "./assets/nenero-icon.png"
+    },
+    "android": {
+      "package": "com.nenero.app",
+      "softwareKeyboardLayoutMode": "resize",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/nenero-icon.png",
+        "backgroundColor": "#7147E8"
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "2e592955-87b4-42fe-a879-2eec078878a1"
+      }
+    },
+    "owner": "willianhora"
+  }
+}
