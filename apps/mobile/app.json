@@ -3,19 +3,17 @@
     "name": "Nenero",
     "slug": "nenero",
     "version": "1.0.0",
-    "icon": "./assets/nenero-icon.png",
+    "icon": "./nenero-icon.png",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "web": {
-      "output": "single",
-      "bundler": "metro",
-      "favicon": "./assets/nenero-icon.png"
+    "ios": {
+      "bundleIdentifier": "com.nenero.app"
     },
     "android": {
       "package": "com.nenero.app",
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/nenero-icon.png",
+        "foregroundImage": "./nenero-icon.png",
         "backgroundColor": "#7147E8"
       }
     },

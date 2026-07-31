@@ -1,7 +1,9 @@
 node_modules
 dist
+**/dist
 builds
 .expo
+**/.expo
 .git
 .env
 .env.*

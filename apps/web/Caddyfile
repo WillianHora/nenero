@@ -1,0 +1,14 @@
+http://hhj0a1pndwb.sn.mynetname.net {
+	redir https://hhj0a1pndwb.sn.mynetname.net:3001{uri} permanent
+}
+
+https://hhj0a1pndwb.sn.mynetname.net {
+	tls internal
+	reverse_proxy nenero:8080
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Frame-Options "SAMEORIGIN"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
+}

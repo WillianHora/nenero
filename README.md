@@ -1,50 +1,75 @@
 # Nenero
 
-Um app de controle financeiro simples, leve e bem-humorado.
+O repositório é um monorepo com aplicações web e mobile independentes.
 
-## Rodar o projeto
+## Estrutura
+
+```text
+apps/
+  mobile/             Expo local para Android e iOS
+  web/                Expo Web com Supabase, PWA, servidor e Docker
+supabase/
+  migrations/         Banco usado pela versão web
+```
+
+## Instalação
+
+Na raiz:
 
 ```bash
 npm install
+```
+
+Copie as variáveis conforme o projeto que será executado:
+
+```bash
+cp apps/mobile/.env.example apps/mobile/.env
+cp apps/web/.env.example apps/web/.env
+```
+
+## Mobile
+
+```bash
+npm run start:mobile
 npm run android
+npm run ios
 ```
 
-Também é possível abrir no navegador com `npm run web`.
-
-## MVP
-
-- Carteiras com saldo inicial
-- Lançamentos de entradas e gastos avulsos
-- Gastos periódicos com ativação e pausa
-- Resumo financeiro e histórico
-- Dados salvos localmente no aparelho
-
-## Análise financeira com Gemini
-
-Como este é um aplicativo pessoal, a integração é feita diretamente no aparelho.
-Copie `.env.example` para `.env` e informe sua chave:
+Os builds EAS devem ser executados dentro do projeto mobile:
 
 ```bash
-EXPO_PUBLIC_GEMINI_API_KEY=SUA_CHAVE_GEMINI
+cd apps/mobile
+npx eas build --platform android --profile preview
+npx eas build --platform ios --profile production
 ```
 
-Depois reinicie o Expo com `npx expo start --clear`.
+## Web
 
-## PWA com Docker
-
-O container gera a versão web instalável e mantém a chave do Gemini apenas no
-servidor. No servidor, copie `docker.env.example` para `.env` e preencha:
+Desenvolvimento:
 
 ```bash
-GEMINI_API_KEY=SUA_CHAVE_GEMINI
-NENERO_PORT=8080
+npm run start:web
 ```
 
-Suba a aplicação:
+Exportação e servidor de produção:
 
 ```bash
+npm run export:web
+npm run serve:web
+```
+
+Docker:
+
+```bash
+cd apps/web
 docker compose up -d --build
 ```
 
-Acesse `http://localhost:8080`. Em produção, publique o container atrás de um
-proxy reverso com HTTPS; navegadores exigem HTTPS para instalar a PWA.
+O proxy HTTPS e o certificado temporário também pertencem exclusivamente ao
+projeto web em `apps/web/Caddyfile`.
+
+## Validação
+
+```bash
+npm run typecheck
+```

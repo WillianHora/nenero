@@ -1,7 +1,8 @@
 services:
   nenero:
     build:
-      context: .
+      context: ../..
+      dockerfile: apps/web/Dockerfile
       args:
         EXPO_PUBLIC_SUPABASE_URL: ${EXPO_PUBLIC_SUPABASE_URL}
         EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY}
@@ -11,3 +12,21 @@ services:
     ports:
       - "${NENERO_PORT:-8080}:8080"
     restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      - nenero
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

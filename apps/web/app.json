@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "Nenero Web",
+    "slug": "nenero-web",
+    "version": "1.0.0",
+    "icon": "./nenero-icon.png",
+    "userInterfaceStyle": "light",
+    "web": {
+      "output": "single",
+      "bundler": "metro",
+      "favicon": "./nenero-icon.png"
+    }
+  }
+}

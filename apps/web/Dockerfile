@@ -7,6 +7,8 @@ ENV EXPO_PUBLIC_SUPABASE_URL=${EXPO_PUBLIC_SUPABASE_URL}
 ENV EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=${EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY}
 
 COPY package.json package-lock.json ./
+COPY apps/mobile/package.json ./apps/mobile/package.json
+COPY apps/web/package.json ./apps/web/package.json
 RUN npm ci
 
 COPY . .
@@ -17,8 +19,8 @@ ENV NODE_ENV=production
 ENV PORT=8080
 WORKDIR /app
 
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/server/web-server.mjs ./server/web-server.mjs
+COPY --from=build /app/apps/web/dist ./dist
+COPY --from=build /app/apps/web/server/web-server.mjs ./server/web-server.mjs
 
 EXPOSE 8080
 USER node

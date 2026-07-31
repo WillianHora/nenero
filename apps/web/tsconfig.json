@@ -3,5 +3,9 @@
   "compilerOptions": {
     "strict": true,
     "noUncheckedIndexedAccess": true
-  }
+  },
+  "include": [
+    "App.tsx",
+    "lib/**/*.ts"
+  ]
 }
