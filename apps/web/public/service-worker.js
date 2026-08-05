@@ -1,4 +1,4 @@
-const CACHE_NAME = "nenero-pwa-v1";
+const CACHE_NAME = "nenero-pwa-v12";
 const APP_SHELL = ["/", "/manifest.json", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", event => {

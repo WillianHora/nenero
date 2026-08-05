@@ -12,11 +12,14 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
+  useColorScheme,
   View,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { parseBankCsv, type ParsedBankTransaction } from "./bankCsv";
 import { supabase, supabaseConfigured } from "./lib/supabase";
 
 type Tab = "inicio" | "movimentos" | "recorrentes" | "cofrinhos" | "carteiras";
@@ -29,8 +32,12 @@ type Entry = {
   category: string;
   walletId: string;
   createdAt: string;
+  importId?: string;
+  importSource?: string;
 };
+type BankImportDraft = ParsedBankTransaction & { selected: boolean; duplicate: boolean };
 type Wallet = { id: string; name: string; initial: number; color: string };
+type WalletBalance = { wallet: Wallet; balance: number };
 type SavingsPot = {
   id: string;
   name: string;
@@ -38,7 +45,10 @@ type SavingsPot = {
   goal: number;
   months: number;
   createdAt: string;
-  contributions: { id: string; value: number; createdAt: string }[];
+  contributions: { id: string; value: number; createdAt: string; walletId?: string }[];
+  compoundInterest: boolean;
+  monthlyInterestRate: number;
+  annualInflationRate: number;
 };
 type Recurring = {
   id: string;
@@ -72,8 +82,16 @@ type FinancialDataPayload = {
   goal: string;
   analysis: AiAnalysis | null;
 };
+type OnboardingData = {
+  name: string;
+  walletName: string;
+  walletBalance: number;
+  monthlyIncome: number;
+  incomeDay: number;
+  financialGoal: string;
+};
 
-const COLORS = {
+const LIGHT_COLORS = {
   ink: "#242033",
   muted: "#777286",
   paper: "#F7F5FA",
@@ -85,12 +103,51 @@ const COLORS = {
   sky: "#C8ECFF",
   line: "#EAE6F0",
 };
+const DARK_COLORS: typeof LIGHT_COLORS = {
+  ink: "#F4F0FA", muted: "#AAA3B8", paper: "#0F0D17", white: "#191624",
+  grape: "#9B7BFF", grapeDark: "#C2AEFF", lime: "#C9F45A", coral: "#FF8E80", sky: "#183443", line: "#2B2738",
+};
+const COLORS = { ...LIGHT_COLORS };
+type ThemeMode = "system" | "light" | "dark";
+const THEME_STORAGE_KEY = "@nenero/theme";
 
 const walletPalette = ["#7147E8", "#FF7B6B", "#2DAE8C", "#E0A72B"];
-const categories = ["Mercado", "Casa", "Transporte", "Lazer", "Assinatura", "Outros"];
+const categories = ["Mercado", "Casa", "Transporte", "Lazer", "Delivery", "Educação", "Saúde", "Assinatura", "Outros"];
+const incomeCategories = ["Salário", "Freelance", "Férias", "Bonificações", "13º salário", "Rendimentos", "Reembolso", "Venda", "Outras entradas"];
+const categoriesByKind: Record<EntryKind, string[]> = { expense: categories, income: incomeCategories };
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const money = (value: number) => brl.format(value);
 const uid = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const parseMoneyInput = (value: string) => Number(value.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", "."));
+const parsePercentInput = (value: string) => Number(value.replace(/[^\d,.-]/g, "").replace(",", "."));
+const getRealMonthlyRate = (pot: Pick<SavingsPot, "compoundInterest" | "monthlyInterestRate" | "annualInflationRate">) => {
+  if (!pot.compoundInterest) return 0;
+  const nominalMonthly = Math.max(0, pot.monthlyInterestRate) / 100;
+  const monthlyInflation = Math.pow(1 + Math.max(0, pot.annualInflationRate) / 100, 1 / 12) - 1;
+  return (1 + nominalMonthly) / (1 + monthlyInflation) - 1;
+};
+const getElapsedMonths = (from: string, to = new Date()) => {
+  const start = new Date(from);
+  return Math.max(0, (to.getFullYear() - start.getFullYear()) * 12 + to.getMonth() - start.getMonth());
+};
+const getSavingsPotBalance = (pot: SavingsPot) => {
+  const rate = getRealMonthlyRate(pot);
+  return pot.contributions.reduce((sum, contribution) => sum + contribution.value * Math.pow(1 + rate, getElapsedMonths(contribution.createdAt)), 0);
+};
+const getSavingsContributionBalance = (pot: SavingsPot, contribution: SavingsPot["contributions"][number]) => (
+  contribution.value * Math.pow(1 + getRealMonthlyRate(pot), getElapsedMonths(contribution.createdAt))
+);
+const getDreamsBalance = (pots: SavingsPot[]) => pots.reduce((total, pot) => total + getSavingsPotBalance(pot), 0);
+const getWalletAvailableBalance = (wallet: Wallet, entries: Entry[], pots: SavingsPot[]) => {
+  const movementBalance = entries.filter((entry) => entry.walletId === wallet.id).reduce((sum, entry) => sum + (entry.kind === "income" ? entry.value : -entry.value), wallet.initial);
+  const reserved = pots.reduce((total, pot) => total + pot.contributions.filter((contribution) => contribution.walletId === wallet.id).reduce((sum, contribution) => sum + contribution.value, 0), 0);
+  return movementBalance - reserved;
+};
+const getMonthlyTarget = (goal: number, months: number, rate: number, currentBalance = 0) => {
+  const missing = Math.max(0, goal - currentBalance * Math.pow(1 + rate, months));
+  if (Math.abs(rate) < 0.0000001) return missing / months;
+  return Math.max(0, missing * rate / (Math.pow(1 + rate, months) - 1));
+};
 const AI_ANALYSIS_STORAGE_KEY = "@nenero/analysis-v2";
 
 const initialWallets: Wallet[] = [];
@@ -98,6 +155,11 @@ const initialEntries: Entry[] = [];
 const initialRecurring: Recurring[] = [];
 
 function AppContent() {
+  const systemColorScheme = useColorScheme();
+  const [themeMode, setThemeMode] = useState<ThemeMode>("system");
+  const isDark = themeMode === "dark" || (themeMode === "system" && systemColorScheme === "dark");
+  Object.assign(COLORS, isDark ? DARK_COLORS : LIGHT_COLORS);
+  styles = createStyles();
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [tab, setTab] = useState<Tab>("inicio");
@@ -112,10 +174,22 @@ function AppContent() {
   const [ready, setReady] = useState(false);
   const [cloudUserId, setCloudUserId] = useState<string | null>(null);
   const [cloudError, setCloudError] = useState("");
-  const [modal, setModal] = useState<"entry" | "wallet" | "recurring" | "pot" | "potDeposit" | "lifeCalculator" | "profile" | "analysis" | null>(null);
+  const [modal, setModal] = useState<"entry" | "wallet" | "recurring" | "pot" | "potDeposit" | "potDelete" | "lifeCalculator" | "profile" | "bankImport" | "analysis" | null>(null);
   const [editingRecurring, setEditingRecurring] = useState<Recurring | null>(null);
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null);
+  const [editingWallet, setEditingWallet] = useState<Wallet | null>(null);
   const [selectedPot, setSelectedPot] = useState<SavingsPot | null>(null);
+
+  useEffect(() => {
+    AsyncStorage.getItem(THEME_STORAGE_KEY).then((saved) => {
+      if (saved === "system" || saved === "light" || saved === "dark") setThemeMode(saved);
+    });
+  }, []);
+
+  const changeTheme = (mode: ThemeMode) => {
+    setThemeMode(mode);
+    AsyncStorage.setItem(THEME_STORAGE_KEY, mode);
+  };
 
   useEffect(() => {
     if (!supabase) {
@@ -157,10 +231,12 @@ function AppContent() {
         }
         if (raw) {
           const data = JSON.parse(raw);
-          setWallets(data.wallets ?? initialWallets);
+          const loadedWallets: Wallet[] = data.wallets ?? initialWallets;
+          const fallbackWalletId = loadedWallets[0]?.id;
+          setWallets(loadedWallets);
           setEntries(data.entries ?? initialEntries);
           setRecurring(data.recurring ?? initialRecurring);
-          setSavingsPots(data.savingsPots ?? []);
+          setSavingsPots((data.savingsPots ?? []).map((pot: SavingsPot) => ({ ...pot, compoundInterest: pot.compoundInterest ?? false, monthlyInterestRate: pot.monthlyInterestRate ?? 0, annualInflationRate: pot.annualInflationRate ?? 0, contributions: (pot.contributions ?? []).map((contribution) => contribution.walletId || !fallbackWalletId ? contribution : { ...contribution, walletId: fallbackWalletId }) })));
         } else {
           setWallets([]);
           setEntries([]);
@@ -208,10 +284,12 @@ function AppContent() {
       }
       if (data?.payload) {
         const payload = data.payload as FinancialDataPayload;
-        setWallets(payload.wallets ?? []);
+        const loadedWallets = payload.wallets ?? [];
+        const fallbackWalletId = loadedWallets[0]?.id;
+        setWallets(loadedWallets);
         setEntries(payload.entries ?? []);
         setRecurring(payload.recurring ?? []);
-        setSavingsPots(payload.savingsPots ?? []);
+        setSavingsPots((payload.savingsPots ?? []).map((pot) => ({ ...pot, compoundInterest: pot.compoundInterest ?? false, monthlyInterestRate: pot.monthlyInterestRate ?? 0, annualInflationRate: pot.annualInflationRate ?? 0, contributions: (pot.contributions ?? []).map((contribution) => contribution.walletId || !fallbackWalletId ? contribution : { ...contribution, walletId: fallbackWalletId }) })));
         setGoal(payload.goal ?? "");
         setAnalysis(payload.analysis ?? null);
       } else {
@@ -296,10 +374,10 @@ function AppContent() {
     }));
   }, [ready, recurring]);
 
-  const totalBalance = useMemo(() => {
-    const initial = wallets.reduce((sum, wallet) => sum + wallet.initial, 0);
-    return entries.reduce((sum, entry) => sum + (entry.kind === "income" ? entry.value : -entry.value), initial);
-  }, [wallets, entries]);
+  const walletBalances = useMemo(() => wallets.map((wallet) => ({ wallet, balance: getWalletAvailableBalance(wallet, entries, savingsPots) })), [wallets, entries, savingsPots]);
+  const availableBalance = useMemo(() => walletBalances.reduce((sum, item) => sum + item.balance, 0), [walletBalances]);
+  const dreamsBalance = useMemo(() => getDreamsBalance(savingsPots), [savingsPots]);
+  const totalBalance = availableBalance + dreamsBalance;
 
   const recurringTotal = recurring.filter((item) => item.active && item.kind !== "income").reduce((sum, item) => sum + item.value, 0);
   const now = new Date();
@@ -351,7 +429,7 @@ function AppContent() {
       .reduce((sum, item) => sum + item.value, 0);
     const projectedResultAfterPending = monthResult - pendingBills;
     const savingsPotSummary = savingsPots.map(pot => {
-      const saved = pot.contributions.reduce((sum, contribution) => sum + contribution.value, 0);
+      const saved = getSavingsPotBalance(pot);
       return {
         name: pot.name,
         description: pot.description,
@@ -360,7 +438,7 @@ function AppContent() {
         saved,
         remaining: Math.max(0, pot.goal - saved),
         progressPercent: Math.min(100, Math.round((saved / pot.goal) * 100)),
-        monthlyTarget: Math.round((pot.goal / pot.months) * 100) / 100,
+        monthlyTarget: Math.round(getMonthlyTarget(pot.goal, pot.months, getRealMonthlyRate(pot)) * 100) / 100,
       };
     });
     try {
@@ -585,9 +663,13 @@ Antes de responder, confira silenciosamente:
   };
 
   const userEmail = session?.user.email ?? "";
-  const userName = (session?.user.user_metadata?.name as string | undefined)?.trim()
-    || userEmail.split("@")[0]?.replace(/[._-]+/g, " ")
-    || "você";
+  const metadataName = session?.user.user_metadata?.name
+    || session?.user.user_metadata?.display_name
+    || session?.user.user_metadata?.full_name;
+  const hasProfileName = typeof metadataName === "string" && Boolean(metadataName.trim());
+  const userName = hasProfileName
+    ? metadataName.trim().slice(0, 40)
+    : "você";
   const userInitials = userName
     .split(" ")
     .filter(Boolean)
@@ -609,13 +691,82 @@ Antes de responder, confira silenciosamente:
     setCloudUserId(null);
   };
 
+  const updateProfileName = async (name: string) => {
+    if (!supabase || !session) throw new Error("Sessão indisponível.");
+    const normalizedName = name.trim().slice(0, 40);
+    if (!normalizedName) throw new Error("Digite um nome para continuar.");
+    const { error } = await supabase.auth.updateUser({
+      data: {
+        ...session.user.user_metadata,
+        name: normalizedName,
+        full_name: normalizedName,
+        display_name: normalizedName,
+      },
+    });
+    if (error) throw error;
+  };
+
+  const updatePassword = async (currentPassword: string, newPassword: string) => {
+    if (!supabase || !session || !session.user.email) throw new Error("Sessão indisponível.");
+    const { error } = await supabase.auth.updateUser({
+      email: session.user.email,
+      current_password: currentPassword,
+      password: newPassword,
+    });
+    if (error) {
+      if (/current password|invalid credentials|password is incorrect/i.test(error.message)) {
+        throw new Error("A senha atual está incorreta.");
+      }
+      if (/same password|different from the old password/i.test(error.message)) {
+        throw new Error("A nova senha precisa ser diferente da atual.");
+      }
+      throw error;
+    }
+  };
+
   if (!supabaseConfigured) return <SupabaseSetupScreen />;
   if (!authReady || (session && !ready)) return <AppLoadingScreen />;
   if (!session) return <AuthScreen />;
+  if (!hasProfileName) return <OnboardingScreen onComplete={async ({ name, walletName, walletBalance, monthlyIncome, incomeDay, financialGoal }) => {
+    await updateProfileName(name);
+    const walletId = uid();
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const recurringIncomeId = uid();
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const salaryDate = new Date(now.getFullYear(), now.getMonth(), Math.min(incomeDay, lastDay), 12);
+    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    const salaryIsDue = salaryDate <= todayEnd;
+    setWallets([{ id: walletId, name: walletName, initial: walletBalance, color: walletPalette[0]! }]);
+    setEntries(salaryIsDue ? [{
+      id: `${recurringIncomeId}-${currentMonth}`,
+      title: "Renda mensal",
+      value: monthlyIncome,
+      kind: "income",
+      category: "Salário",
+      walletId,
+      createdAt: salaryDate.toISOString(),
+    }] : []);
+    setRecurring([{
+      id: recurringIncomeId,
+      title: "Renda mensal",
+      value: monthlyIncome,
+      day: incomeDay,
+      category: "Salário",
+      active: true,
+      kind: "income",
+      walletId,
+      startDate: now.toISOString(),
+      postedMonths: salaryIsDue ? [currentMonth] : [],
+    }]);
+    setSavingsPots([]);
+    setGoal(financialGoal);
+    setAnalysis(null);
+  }} />;
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar style="dark" />
+      <StatusBar style={isDark ? "light" : "dark"} />
       <View style={styles.app}>
         <View style={styles.topbar}>
           <View style={styles.brandRow}>
@@ -644,9 +795,6 @@ Antes de responder, confira silenciosamente:
               onRefresh={() => runAnalysis(false)}
               onAdd={() => { setEditingEntry(null); setModal("entry"); }}
               onEditEntry={(entry) => { setEditingEntry(entry); setModal("entry"); }}
-              onWallet={() => setModal("wallet")}
-              onRecurring={() => setModal("recurring")}
-              onSavingsPot={() => setTab("cofrinhos")}
               onLifeCalculator={() => setModal("lifeCalculator")}
             />
           )}
@@ -682,11 +830,13 @@ Antes de responder, confira silenciosamente:
           {tab === "cofrinhos" && (
             <SavingsPotList
               pots={savingsPots}
+              wallets={wallets}
               onAdd={() => setModal("pot")}
               onDeposit={(pot) => { setSelectedPot(pot); setModal("potDeposit"); }}
+              onDelete={(pot) => { setSelectedPot(pot); setModal("potDelete"); }}
             />
           )}
-          {tab === "carteiras" && <WalletList wallets={wallets} entries={entries} onAdd={() => setModal("wallet")} />}
+          {tab === "carteiras" && <WalletList walletBalances={walletBalances} pots={savingsPots} dreamsBalance={dreamsBalance} onAdd={() => { setEditingWallet(null); setModal("wallet"); }} onEdit={(wallet) => { setEditingWallet(wallet); setModal("wallet"); }} onOpenDreams={() => setTab("cofrinhos")} />}
         </ScrollView>
 
         <BottomNav tab={tab} setTab={setTab} />
@@ -706,11 +856,37 @@ Antes de responder, confira silenciosamente:
           }
           setEditingEntry(null);
         }}
+        onDelete={editingEntry ? () => {
+          const entry = editingEntry;
+          const confirmed = globalThis.confirm(`Excluir “${entry.title}”?\n\n${entry.kind === "income" ? "A entrada" : "O gasto"} de ${money(entry.value)} será apagado. Essa ação não pode ser desfeita.`);
+          if (!confirmed) return;
+          setEntries((items) => items.filter((item) => item.id !== entry.id));
+          setModal(null);
+          setEditingEntry(null);
+        } : undefined}
       />
       <WalletModal
         visible={modal === "wallet"}
-        onClose={() => setModal(null)}
-        onSave={(wallet) => { setWallets((items) => [...items, { ...wallet, id: uid(), color: walletPalette[items.length % walletPalette.length] ?? COLORS.grape }]); setModal(null); }}
+        item={editingWallet}
+        onClose={() => { setModal(null); setEditingWallet(null); }}
+        onSave={(wallet) => {
+          if (editingWallet) setWallets((items) => items.map((item) => item.id === editingWallet.id ? { ...item, ...wallet } : item));
+          else setWallets((items) => [...items, { ...wallet, id: uid(), color: walletPalette[items.length % walletPalette.length] ?? COLORS.grape }]);
+          setModal(null);
+          setEditingWallet(null);
+        }}
+        onDelete={editingWallet ? () => {
+          const linkedEntries = entries.filter((entry) => entry.walletId === editingWallet.id).length;
+          const linkedRecurring = recurring.filter((item) => item.walletId === editingWallet.id).length;
+          const linkedCopy = [linkedEntries ? `${linkedEntries} lançamento${linkedEntries === 1 ? "" : "s"}` : "", linkedRecurring ? `${linkedRecurring} planejamento${linkedRecurring === 1 ? "" : "s"}` : ""].filter(Boolean).join(" e ");
+          const confirmed = globalThis.confirm(`Excluir “${editingWallet.name}”?\n\n${linkedCopy ? `A carteira e ${linkedCopy} vinculados serão apagados.` : "A carteira será apagada."} Essa ação não pode ser desfeita.`);
+          if (!confirmed) return;
+          setWallets((items) => items.filter((item) => item.id !== editingWallet.id));
+          setEntries((items) => items.filter((item) => item.walletId !== editingWallet.id));
+          setRecurring((items) => items.filter((item) => item.walletId !== editingWallet.id));
+          setModal(null);
+          setEditingWallet(null);
+        } : undefined}
       />
       <RecurringModal
         visible={modal === "recurring"}
@@ -738,13 +914,48 @@ Antes de responder, confira silenciosamente:
       <SavingsPotDepositModal
         visible={modal === "potDeposit"}
         pot={selectedPot}
+        walletBalances={walletBalances}
+        dreamsBalance={dreamsBalance}
         onClose={() => { setModal(null); setSelectedPot(null); }}
-        onSave={(value) => {
+        onSave={(value, walletId) => {
           if (!selectedPot) return;
           setSavingsPots(items => items.map(pot => pot.id === selectedPot.id ? {
             ...pot,
-            contributions: [...pot.contributions, { id: uid(), value, createdAt: new Date().toISOString() }],
+            contributions: [...pot.contributions, { id: uid(), value, walletId, createdAt: new Date().toISOString() }],
           } : pot));
+          setModal(null);
+          setSelectedPot(null);
+        }}
+      />
+      <SavingsPotDeleteModal
+        visible={modal === "potDelete"}
+        pot={selectedPot}
+        wallets={wallets}
+        onClose={() => { setModal(null); setSelectedPot(null); }}
+        onDelete={(mode) => {
+          if (!selectedPot) return;
+          const pot = selectedPot;
+          const now = new Date().toISOString();
+          const amountsByWallet = pot.contributions.reduce<Record<string, { principal: number; current: number }>>((totals, contribution) => {
+            if (!contribution.walletId || !wallets.some((wallet) => wallet.id === contribution.walletId)) return totals;
+            const current = totals[contribution.walletId] ?? { principal: 0, current: 0 };
+            current.principal += contribution.value;
+            current.current += getSavingsContributionBalance(pot, contribution);
+            totals[contribution.walletId] = current;
+            return totals;
+          }, {});
+          const adjustmentEntries = Object.entries(amountsByWallet).reduce<Entry[]>((items, [walletId, amounts]) => {
+            if (mode === "discard") {
+              if (amounts.principal > 0) items.push({ id: uid(), title: `Valor descartado do cofrinho ${pot.name}`, value: amounts.principal, kind: "expense", category: "Outros", walletId, createdAt: now });
+              return items;
+            }
+            const yieldValue = Math.max(0, amounts.current - amounts.principal);
+            if (yieldValue >= 0.01) items.push({ id: uid(), title: `Rendimento do cofrinho ${pot.name}`, value: yieldValue, kind: "income", category: "Rendimentos", walletId, createdAt: now });
+            return items;
+          }, []);
+          if (adjustmentEntries.length) setEntries((items) => [...adjustmentEntries, ...items]);
+          setSavingsPots((items) => items.filter((item) => item.id !== pot.id));
+          setAnalysis(null);
           setModal(null);
           setSelectedPot(null);
         }}
@@ -763,30 +974,47 @@ Antes de responder, confira silenciosamente:
         userEmail={userEmail}
         userInitials={userInitials}
         onClose={() => setModal(null)}
+        onNameSave={updateProfileName}
+        onPasswordChange={updatePassword}
+        onImportBank={() => setModal("bankImport")}
         onSave={(value) => { setGoal(value); setAnalysis(null); setModal(null); }}
         onSignOut={signOut}
+        themeMode={themeMode}
+        onThemeChange={changeTheme}
+      />
+      <BankImportModal
+        visible={modal === "bankImport"}
+        wallets={wallets}
+        existingEntries={entries}
+        onClose={() => setModal(null)}
+        onImport={(importedEntries) => {
+          setEntries((current) => [...importedEntries.map((entry) => ({ ...entry, id: uid() })), ...current]);
+          setAnalysis(null);
+          setModal(null);
+        }}
       />
       <AnalysisModal visible={modal === "analysis"} analysis={analysis} loading={analyzing} error={analysisError} onRetry={runAnalysis} onClose={() => setModal(null)} />
     </SafeAreaView>
   );
 }
 
-function Home({ userName, balance, recurringTotal, monthlyIncome, monthlyExpenses, entries, wallets, analysis, analyzing, hasGoal, onAnalyze, onRefresh, onAdd, onEditEntry, onWallet, onRecurring, onSavingsPot, onLifeCalculator }: {
+function Home({ userName, balance, recurringTotal, monthlyIncome, monthlyExpenses, entries, wallets, analysis, analyzing, hasGoal, onAnalyze, onRefresh, onAdd, onEditEntry, onLifeCalculator }: {
   userName: string;
   balance: number; recurringTotal: number; monthlyIncome: number; monthlyExpenses: number; entries: Entry[]; wallets: Wallet[];
   analysis: AiAnalysis | null; analyzing: boolean; hasGoal: boolean; onAnalyze: () => void; onRefresh: () => void;
-  onAdd: () => void; onEditEntry: (entry: Entry) => void; onWallet: () => void; onRecurring: () => void; onSavingsPot: () => void; onLifeCalculator: () => void;
+  onAdd: () => void; onEditEntry: (entry: Entry) => void; onLifeCalculator: () => void;
 }) {
+  const darkTheme = COLORS.paper === DARK_COLORS.paper;
   const today = new Date().toLocaleDateString("pt-BR", {
     weekday: "long",
     day: "2-digit",
     month: "long",
   }).toUpperCase();
   const balanceGradient: [string, string] = analysis?.status === "danger"
-    ? ["#7C3453", "#4E244B"]
+    ? darkTheme ? ["#54243A", "#2C172B"] : ["#7C3453", "#4E244B"]
     : analysis?.status === "attention"
-      ? ["#8550C8", "#5B32C8"]
-      : ["#7951ED", "#5B32C8"];
+      ? darkTheme ? ["#51327B", "#2D1E58"] : ["#8550C8", "#5B32C8"]
+      : darkTheme ? ["#4B2E86", "#27194F"] : ["#7951ED", "#5B32C8"];
   const aiStatusLabel = analysis?.status === "danger"
     ? "PERIGO"
     : analysis?.status === "attention"
@@ -818,7 +1046,7 @@ function Home({ userName, balance, recurringTotal, monthlyIncome, monthlyExpense
         <View style={styles.balanceGlow} />
         <View style={styles.balanceHeader}>
           <Text style={styles.balanceLabel}>Seu dinheiro todo</Text>
-          {aiStatusLabel && <View style={[styles.balanceAiBadge, { backgroundColor: aiStatusColor }]}><MaterialCommunityIcons name="creation" size={12} color={COLORS.ink} /><Text style={styles.balanceAiBadgeText}>{aiStatusLabel}</Text></View>}
+          {aiStatusLabel && <View style={[styles.balanceAiBadge, { backgroundColor: aiStatusColor }]}><MaterialCommunityIcons name="creation" size={12} color="#242033" /><Text style={styles.balanceAiBadgeText}>{aiStatusLabel}</Text></View>}
         </View>
         <Text style={styles.balanceValue}>{money(balance)}</Text>
         {analysis ? (
@@ -830,21 +1058,21 @@ function Home({ userName, balance, recurringTotal, monthlyIncome, monthlyExpense
           <Text style={styles.balanceCopy}>{balance >= 0 ? "Tá bonito. E o melhor: tá organizado." : "Respira. Vamos ajeitar isso juntos."}</Text>
         )}
         <Pressable style={styles.whiteButton} onPress={onAdd}>
-          <Feather name="plus" size={18} color={COLORS.grapeDark} />
+          <Feather name="plus" size={18} color="#532CB8" />
           <Text style={styles.whiteButtonText}>Novo lançamento</Text>
         </Pressable>
       </LinearGradient>
 
       <View style={styles.metricsRow}>
-        <View style={[styles.metricCard, { backgroundColor: "#EAF8D0" }]}>
+        <View style={[styles.metricCard, styles.metricIncomeCard]}>
           <View style={[styles.iconBubble, { backgroundColor: "#799B22" }]}><Feather name="arrow-down-left" size={17} color="white" /></View>
-          <Text style={styles.metricLabel}>Entrou este mês</Text>
-          <Text style={styles.metricValue}>{money(monthlyIncome)}</Text>
+          <Text style={[styles.metricLabel, styles.metricIncomeLabel]}>Entrou este mês</Text>
+          <Text style={[styles.metricValue, styles.metricIncomeValue]}>{money(monthlyIncome)}</Text>
         </View>
-        <View style={[styles.metricCard, { backgroundColor: "#FFF0ED" }]}>
+        <View style={[styles.metricCard, styles.metricExpenseCard]}>
           <View style={[styles.iconBubble, { backgroundColor: COLORS.coral }]}><Feather name="arrow-up-right" size={17} color="white" /></View>
-          <Text style={styles.metricLabel}>Saiu este mês</Text>
-          <Text style={styles.metricValue}>{money(monthlyExpenses)}</Text>
+          <Text style={[styles.metricLabel, styles.metricExpenseLabel]}>Saiu este mês</Text>
+          <Text style={[styles.metricValue, styles.metricExpenseValue]}>{money(monthlyExpenses)}</Text>
         </View>
       </View>
       <View style={styles.commitmentCard}>
@@ -853,12 +1081,6 @@ function Home({ userName, balance, recurringTotal, monthlyIncome, monthlyExpense
         <Text style={styles.metricValue}>{money(recurringTotal)}</Text>
       </View>
 
-      <SectionTitle title="Atalhos sem enrolação" />
-      <View style={styles.quickRow}>
-        <QuickAction icon="credit-card" label="Nova carteira" onPress={onWallet} />
-        <QuickAction icon="calendar" label="Planejar mês" onPress={onRecurring} />
-        <QuickAction icon="target" label="Meus cofrinhos" onPress={onSavingsPot} />
-      </View>
       <Pressable style={({ pressed }) => [styles.lifeFeatureCard, pressed && styles.pressed]} onPress={onLifeCalculator}>
         <View style={styles.lifeFeatureIcon}><Feather name="clock" size={22} color={COLORS.grape} /></View>
         <View style={styles.flex}><Text style={styles.lifeFeatureEyebrow}>CALCULADORA DE VIDA GASTA</Text><Text style={styles.lifeFeatureTitle}>Quanto trabalho custa essa compra?</Text></View>
@@ -1020,39 +1242,49 @@ function RecurringList({ items, wallets, onAdd, onEdit, onToggle, onPay }: { ite
   );
 }
 
-function WalletList({ wallets, entries, onAdd }: { wallets: Wallet[]; entries: Entry[]; onAdd: () => void }) {
-  const walletBalance = (wallet: Wallet) => entries.filter(e => e.walletId === wallet.id).reduce((sum, e) => sum + (e.kind === "income" ? e.value : -e.value), wallet.initial);
+function WalletList({ walletBalances, pots, dreamsBalance, onAdd, onEdit, onOpenDreams }: { walletBalances: WalletBalance[]; pots: SavingsPot[]; dreamsBalance: number; onAdd: () => void; onEdit: (wallet: Wallet) => void; onOpenDreams: () => void }) {
   return (
     <>
       <PageHeader eyebrow="CADA REAL NO SEU CANTO" title="Carteiras" button="Criar" onPress={onAdd} />
-      {wallets.map((wallet) => (
-        <View key={wallet.id} style={[styles.walletCard, { backgroundColor: wallet.color }]}>
-          <View style={styles.walletTop}><Feather name="credit-card" size={22} color="white" /><Text style={styles.walletDots}>••••</Text></View>
+      {walletBalances.map(({ wallet, balance }) => (
+        <Pressable key={wallet.id} style={[styles.walletCard, { backgroundColor: wallet.color }]} onPress={() => onEdit(wallet)} accessibilityLabel={`Editar carteira ${wallet.name}`}>
+          <View style={styles.walletTop}><Feather name="credit-card" size={22} color="white" /><View style={styles.walletEditBadge}><Feather name="edit-2" size={14} color="white" /></View></View>
           <Text style={styles.walletName}>{wallet.name}</Text>
-          <Text style={styles.walletBalance}>{money(walletBalance(wallet))}</Text>
-        </View>
+          <Text style={styles.walletBalance}>{money(balance)}</Text>
+        </Pressable>
       ))}
       <Pressable style={styles.dashedButton} onPress={onAdd}><Feather name="plus" size={20} color={COLORS.grape} /><Text style={styles.dashedText}>Criar outra carteira</Text></Pressable>
+      {pots.length > 0 && <Pressable style={styles.dreamWalletPressable} onPress={onOpenDreams}>
+        <LinearGradient colors={["#2B214D", "#6540C8"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.dreamWalletCard}>
+          <View style={styles.dreamWalletTop}><View style={styles.dreamWalletIcon}><MaterialCommunityIcons name="star-four-points" size={22} color="#242033" /></View><View style={styles.dreamWalletAutoBadge}><Text style={styles.dreamWalletAutoText}>CARTEIRA AUTOMÁTICA</Text></View></View>
+          <Text style={styles.dreamWalletLabel}>Meus sonhos</Text><Text style={styles.dreamWalletBalance}>{money(dreamsBalance)}</Text>
+          <Text style={styles.dreamWalletCopy}>{pots.length} {pots.length === 1 ? "cofrinho guardando um plano" : "cofrinhos guardando seus planos"}. Esse dinheiro continua seu, só saiu da rota do impulso.</Text>
+          <View style={styles.dreamWalletOpen}><Text style={styles.dreamWalletOpenText}>Ver meus cofrinhos</Text><Feather name="arrow-up-right" size={16} color={COLORS.lime} /></View>
+        </LinearGradient>
+      </Pressable>}
     </>
   );
 }
 
-function SavingsPotList({ pots, onAdd, onDeposit }: { pots: SavingsPot[]; onAdd: () => void; onDeposit: (pot: SavingsPot) => void }) {
+function SavingsPotList({ pots, wallets, onAdd, onDeposit, onDelete }: { pots: SavingsPot[]; wallets: Wallet[]; onAdd: () => void; onDeposit: (pot: SavingsPot) => void; onDelete: (pot: SavingsPot) => void }) {
   return (
     <>
       <PageHeader eyebrow="UM POUQUINHO VIRA MUITO" title="Cofrinhos" button="Criar" onPress={onAdd} />
       {pots.length ? pots.map(pot => {
-        const saved = pot.contributions.reduce((sum, contribution) => sum + contribution.value, 0);
+        const saved = getSavingsPotBalance(pot);
         const progress = Math.min(100, Math.round((saved / pot.goal) * 100));
         const remaining = Math.max(0, pot.goal - saved);
         const deadline = new Date(new Date(pot.createdAt).getFullYear(), new Date(pot.createdAt).getMonth() + pot.months, 1);
-        const monthlyTarget = pot.goal / pot.months;
+        const realMonthlyRate = getRealMonthlyRate(pot);
+        const remainingMonths = Math.max(1, pot.months - getElapsedMonths(pot.createdAt));
+        const monthlyTarget = getMonthlyTarget(pot.goal, remainingMonths, realMonthlyRate, saved);
+        const sourceWalletNames = [...new Set(pot.contributions.map((contribution) => wallets.find((wallet) => wallet.id === contribution.walletId)?.name).filter((name): name is string => Boolean(name)))];
         return (
           <View key={pot.id} style={styles.potCard}>
             <View style={styles.potTop}>
               <View style={styles.potIcon}><MaterialCommunityIcons name="piggy-bank-outline" size={25} color={COLORS.grape} /></View>
               <View style={styles.flex}><Text style={styles.potName}>{pot.name}</Text><Text style={styles.potDescription}>{pot.description || "Um objetivo com lugar marcado."}</Text></View>
-              <Text style={styles.potPercent}>{progress}%</Text>
+              <View style={styles.potTopActions}><Text style={styles.potPercent}>{progress}%</Text><Pressable accessibilityLabel={`Apagar cofrinho ${pot.name}`} style={styles.potDeleteIcon} onPress={() => onDelete(pot)}><Feather name="trash-2" size={15} color="#B54337" /></Pressable></View>
             </View>
             <View style={styles.potProgressTrack}><View style={[styles.potProgressFill, { width: `${progress}%` }]} /></View>
             <View style={styles.potValues}>
@@ -1060,6 +1292,8 @@ function SavingsPotList({ pots, onAdd, onDeposit }: { pots: SavingsPot[]; onAdd:
               <View style={styles.potGoalBlock}><Text style={styles.potValueLabel}>META</Text><Text style={styles.potGoal}>{money(pot.goal)}</Text></View>
             </View>
             <Text style={styles.potPlan}>{money(monthlyTarget)}/mês · até {deadline.toLocaleDateString("pt-BR", { month: "short", year: "numeric" })}</Text>
+            {pot.compoundInterest && <View style={styles.potYieldBadge}><Feather name="trending-up" size={13} color="#167B6B" /><Text style={styles.potYieldText}>{(realMonthlyRate * 100).toLocaleString("pt-BR", { maximumFractionDigits: 3 })}% ao mês, já descontada a inflação</Text></View>}
+            {!!sourceWalletNames.length && <View style={styles.potSourceLine}><Feather name="corner-down-right" size={13} color={COLORS.muted} /><Text style={styles.potSourceText} numberOfLines={1}>Veio de {sourceWalletNames.join(", ")}</Text></View>}
             {remaining > 0 ? (
               <Pressable style={styles.potDepositButton} onPress={() => onDeposit(pot)}><Feather name="plus" size={17} color="white" /><Text style={styles.potDepositButtonText}>Colocar dinheiro</Text></Pressable>
             ) : (
@@ -1103,10 +1337,6 @@ function SectionTitle({ title, action }: { title: string; action?: string }) {
   return <View style={styles.sectionTitle}><Text style={styles.sectionTitleText}>{title}</Text>{action && <Text style={styles.sectionAction}>{action}</Text>}</View>;
 }
 
-function QuickAction({ icon, label, onPress }: { icon: keyof typeof Feather.glyphMap; label: string; onPress: () => void }) {
-  return <Pressable style={({ pressed }) => [styles.quickAction, pressed && styles.pressed]} onPress={onPress}><View style={styles.quickIcon}><Feather name={icon} size={21} color={COLORS.grape} /></View><Text style={styles.quickLabel}>{label}</Text></Pressable>;
-}
-
 function BottomNav({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
   const tabs: { key: Tab; label: string; icon: keyof typeof Feather.glyphMap }[] = [
     { key: "inicio", label: "Início", icon: "home" }, { key: "movimentos", label: "Movimentos", icon: "list" },
@@ -1131,7 +1361,7 @@ function Field({ label, value, onChange, placeholder, keyboardType, secureTextEn
   return <View style={styles.field}><Text style={styles.fieldLabel}>{label}</Text><TextInput style={styles.input} value={value} onChangeText={onChange} placeholder={placeholder} placeholderTextColor="#B4AFBB" keyboardType={keyboardType} secureTextEntry={secureTextEntry} autoCapitalize={keyboardType === "email-address" ? "none" : undefined} autoCorrect={keyboardType === "email-address" ? false : undefined} /></View>;
 }
 
-function EntryModal({ visible, wallets, item, onClose, onSave }: { visible: boolean; wallets: Wallet[]; item: Entry | null; onClose: () => void; onSave: (entry: Omit<Entry, "id">) => void }) {
+function EntryModal({ visible, wallets, item, onClose, onSave, onDelete }: { visible: boolean; wallets: Wallet[]; item: Entry | null; onClose: () => void; onSave: (entry: Omit<Entry, "id">) => void; onDelete?: () => void }) {
   const today = new Date();
   const [kind, setKind] = useState<EntryKind>("expense"); const [title, setTitle] = useState(""); const [value, setValue] = useState(""); const [category, setCategory] = useState(categories[0]!); const [walletId, setWalletId] = useState(wallets[0]?.id ?? "");
   const [referenceMonth, setReferenceMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
@@ -1172,13 +1402,20 @@ function EntryModal({ visible, wallets, item, onClose, onSave }: { visible: bool
     <Text style={styles.fieldLabel}>Categoria</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>{categories.map(c => <Pressable key={c} style={[styles.chip, category === c && styles.chipActive]} onPress={() => setCategory(c)}><Text style={[styles.chipText, category === c && styles.chipTextActive]}>{c}</Text></Pressable>)}</ScrollView>
     <Text style={styles.fieldLabel}>Carteira</Text><View style={styles.walletOptions}>{wallets.map(w => <Pressable key={w.id} style={[styles.walletOption, walletId === w.id && styles.walletOptionActive]} onPress={() => setWalletId(w.id)}><View style={[styles.colorDot, { backgroundColor: w.color }]} /><Text style={styles.walletOptionText}>{w.name}</Text>{walletId === w.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
     <PrimaryButton label={item ? "Salvar alterações" : "Salvar lançamento"} onPress={save} disabled={!title.trim() || !value || !validDate || !walletId} />
+    {item && onDelete && <Pressable style={styles.deleteEntryButton} onPress={onDelete}><Feather name="trash-2" size={17} color="#B54337" /><Text style={styles.deleteEntryButtonText}>Excluir {item.kind === "income" ? "entrada" : "gasto"}</Text></Pressable>}
   </Sheet>;
 }
 
-function WalletModal({ visible, onClose, onSave }: { visible: boolean; onClose: () => void; onSave: (wallet: Omit<Wallet, "id" | "color">) => void }) {
+function WalletModal({ visible, item, onClose, onSave, onDelete }: { visible: boolean; item: Wallet | null; onClose: () => void; onSave: (wallet: Omit<Wallet, "id" | "color">) => void; onDelete?: () => void }) {
   const [name, setName] = useState(""); const [initial, setInitial] = useState("");
-  const save = () => { const parsed = Number(initial.replace(",", ".")) || 0; if (name.trim()) { onSave({ name: name.trim(), initial: parsed }); setName(""); setInitial(""); } };
-  return <Sheet visible={visible} title="Nova carteira" subtitle="Um cantinho novo pro seu dinheiro." onClose={onClose}><Field label="Nome da carteira" value={name} onChange={setName} placeholder="Ex.: Conta do dia a dia" /><Field label="Saldo inicial" value={initial} onChange={setInitial} placeholder="R$ 0,00" keyboardType="decimal-pad" /><PrimaryButton label="Criar carteira" onPress={save} disabled={!name.trim()} /></Sheet>;
+  useEffect(() => { if (visible) { setName(item?.name ?? ""); setInitial(""); } }, [visible, item]);
+  const save = () => { const parsed = item?.initial ?? (parseMoneyInput(initial) || 0); if (name.trim()) onSave({ name: name.trim(), initial: parsed }); };
+  return <Sheet visible={visible} title={item ? "Editar carteira" : "Nova carteira"} subtitle={item ? "Troque o nome sem mexer na história do saldo." : "Um cantinho novo pro seu dinheiro."} onClose={onClose}>
+    <Field label="Nome da carteira" value={name} onChange={setName} placeholder="Ex.: Conta do dia a dia" />
+    {!item && <Field label="Saldo inicial" value={initial} onChange={setInitial} placeholder="R$ 0,00" keyboardType="decimal-pad" />}
+    <PrimaryButton label={item ? "Salvar alterações" : "Criar carteira"} onPress={save} disabled={!name.trim()} />
+    {item && onDelete && <Pressable style={styles.deleteWalletButton} onPress={onDelete}><Feather name="trash-2" size={16} color="#B54337" /><Text style={styles.deleteWalletButtonText}>Excluir carteira</Text></Pressable>}
+  </Sheet>;
 }
 
 function RecurringModal({ visible, wallets, item, onClose, onSave }: { visible: boolean; wallets: Wallet[]; item: Recurring | null; onClose: () => void; onSave: (item: Omit<Recurring, "id" | "active">) => void }) {
@@ -1218,17 +1455,25 @@ function RecurringModal({ visible, wallets, item, onClose, onSave }: { visible: 
   </Sheet>;
 }
 
-function SavingsPotModal({ visible, onClose, onSave }: { visible: boolean; onClose: () => void; onSave: (pot: Pick<SavingsPot, "name" | "description" | "goal" | "months">) => void }) {
+function SavingsPotModal({ visible, onClose, onSave }: { visible: boolean; onClose: () => void; onSave: (pot: Pick<SavingsPot, "name" | "description" | "goal" | "months" | "compoundInterest" | "monthlyInterestRate" | "annualInflationRate">) => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [goalValue, setGoalValue] = useState("");
   const [months, setMonths] = useState("9");
+  const [compoundInterest, setCompoundInterest] = useState(false);
+  const [monthlyInterestRate, setMonthlyInterestRate] = useState("");
+  const [annualInflationRate, setAnnualInflationRate] = useState("");
   useEffect(() => {
-    if (visible) { setName(""); setDescription(""); setGoalValue(""); setMonths("9"); }
+    if (visible) { setName(""); setDescription(""); setGoalValue(""); setMonths("9"); setCompoundInterest(false); setMonthlyInterestRate(""); setAnnualInflationRate(""); }
   }, [visible]);
   const goal = Number(goalValue.replace(",", "."));
   const parsedMonths = Number(months);
-  const valid = Boolean(name.trim()) && goal > 0 && parsedMonths >= 1 && parsedMonths <= 120;
+  const nominalRate = parsePercentInput(monthlyInterestRate);
+  const inflationRate = annualInflationRate.trim() ? parsePercentInput(annualInflationRate) : 0;
+  const interestConfigValid = !compoundInterest || (Number.isFinite(nominalRate) && nominalRate > 0 && nominalRate <= 100 && Number.isFinite(inflationRate) && inflationRate >= 0 && inflationRate <= 100);
+  const realMonthlyRate = getRealMonthlyRate({ compoundInterest, monthlyInterestRate: nominalRate || 0, annualInflationRate: inflationRate || 0 });
+  const monthlyTarget = goal > 0 && parsedMonths > 0 ? getMonthlyTarget(goal, parsedMonths, realMonthlyRate) : 0;
+  const valid = Boolean(name.trim()) && goal > 0 && parsedMonths >= 1 && parsedMonths <= 120 && interestConfigValid;
   return <Sheet visible={visible} title="Novo cofrinho" subtitle="Dê um destino para cada real guardado." onClose={onClose}>
     <Field label="Nome do cofrinho" value={name} onChange={setName} placeholder="Ex.: Viagem, notebook, reserva..." />
     <Text style={styles.fieldLabel}>Descrição</Text>
@@ -1244,29 +1489,72 @@ function SavingsPotModal({ visible, onClose, onSave }: { visible: boolean; onClo
     />
     <Field label="Quanto quer juntar?" value={goalValue} onChange={setGoalValue} placeholder="R$ 1.800,00" keyboardType="decimal-pad" />
     <Field label="Em quantos meses?" value={months} onChange={setMonths} placeholder="Ex.: 9" keyboardType="number-pad" />
-    {goal > 0 && parsedMonths > 0 && <View style={styles.potPreview}><Feather name="calendar" size={17} color={COLORS.grape} /><Text style={styles.potPreviewText}>Para chegar lá: {money(goal / parsedMonths)} por mês.</Text></View>}
-    <PrimaryButton label="Criar cofrinho" onPress={() => valid && onSave({ name: name.trim(), description: description.trim(), goal, months: parsedMonths })} disabled={!valid} />
+    <View style={styles.interestToggleCard}><View style={styles.interestToggleCopy}><Text style={styles.interestToggleTitle}>Este cofrinho rende juros compostos?</Text><Text style={styles.interestToggleHint}>Ative para considerar o rendimento na projeção da meta.</Text></View><Switch value={compoundInterest} onValueChange={setCompoundInterest} trackColor={{ false: "#D8D2DE", true: "#B9A8EC" }} thumbColor={compoundInterest ? COLORS.grape : "#FFFFFF"} /></View>
+    {compoundInterest && <View style={styles.interestFields}>
+      <Field label="Rendimento ao mês (%)" value={monthlyInterestRate} onChange={setMonthlyInterestRate} placeholder="Ex.: 0,8" keyboardType="decimal-pad" />
+      <Field label="Inflação ao ano (%) · opcional" value={annualInflationRate} onChange={setAnnualInflationRate} placeholder="Ex.: 4,5" keyboardType="decimal-pad" />
+      {interestConfigValid && nominalRate > 0 && <View style={styles.realRateCard}><Feather name="shield" size={16} color="#167B6B" /><View style={{ flex: 1 }}><Text style={styles.realRateLabel}>RENDIMENTO REAL ESTIMADO</Text><Text style={styles.realRateValue}>{(realMonthlyRate * 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 3 })}% ao mês</Text><Text style={styles.realRateHint}>Rendimento nominal menos o efeito composto da inflação anual.</Text></View></View>}
+    </View>}
+    {goal > 0 && parsedMonths > 0 && <View style={styles.potPreview}><Feather name={compoundInterest ? "trending-up" : "calendar"} size={17} color={COLORS.grape} /><Text style={styles.potPreviewText}>Para chegar lá: {money(monthlyTarget)} por mês{compoundInterest ? ", considerando o rendimento real." : "."}</Text></View>}
+    <PrimaryButton label="Criar cofrinho" onPress={() => valid && onSave({ name: name.trim(), description: description.trim(), goal, months: parsedMonths, compoundInterest, monthlyInterestRate: compoundInterest ? nominalRate : 0, annualInflationRate: compoundInterest ? inflationRate : 0 })} disabled={!valid} />
   </Sheet>;
 }
 
-function SavingsPotDepositModal({ visible, pot, onClose, onSave }: { visible: boolean; pot: SavingsPot | null; onClose: () => void; onSave: (value: number) => void }) {
+function SavingsPotDepositModal({ visible, pot, walletBalances, dreamsBalance, onClose, onSave }: { visible: boolean; pot: SavingsPot | null; walletBalances: WalletBalance[]; dreamsBalance: number; onClose: () => void; onSave: (value: number, walletId: string) => void }) {
   const [customValue, setCustomValue] = useState("");
   const [selectedValue, setSelectedValue] = useState<number | null>(null);
+  const [walletId, setWalletId] = useState("");
   useEffect(() => {
-    if (visible) { setCustomValue(""); setSelectedValue(null); }
-  }, [visible, pot]);
-  const custom = Number(customValue.replace(",", "."));
+    if (visible) { setCustomValue(""); setSelectedValue(null); setWalletId(walletBalances.find((item) => item.balance > 0)?.wallet.id ?? walletBalances[0]?.wallet.id ?? ""); }
+  }, [visible, pot, walletBalances]);
+  const custom = parseMoneyInput(customValue);
   const value = selectedValue ?? custom;
-  const saved = pot?.contributions.reduce((sum, contribution) => sum + contribution.value, 0) ?? 0;
+  const saved = pot ? getSavingsPotBalance(pot) : 0;
   const remaining = Math.max(0, (pot?.goal ?? 0) - saved);
-  return <Sheet visible={visible} title={`Guardar em ${pot?.name ?? "cofrinho"}`} subtitle={`Faltam ${money(remaining)} para bater a meta.`} onClose={onClose}>
+  const selectedWallet = walletBalances.find((item) => item.wallet.id === walletId);
+  const insufficientBalance = Boolean(selectedWallet && value > selectedWallet.balance);
+  const canSave = Boolean(walletId && value > 0 && selectedWallet && !insufficientBalance);
+  return <Sheet visible={visible} title={`Guardar em ${pot?.name ?? "cofrinho"}`} subtitle={`Faltam ${money(remaining)}. Agora escolha de onde esse dinheiro vai sair.`} onClose={onClose}>
+    <View style={styles.potTransferNote}><MaterialCommunityIcons name="swap-horizontal" size={19} color={COLORS.grape} /><Text style={styles.potTransferNoteText}>É uma transferência entre seus bolsos: diminui na carteira escolhida e aparece em “Meus sonhos”. Seu dinheiro total não muda.</Text></View>
+    <Text style={styles.fieldLabel}>Tirar de qual carteira?</Text>
+    <View style={styles.potWalletOptions}>{walletBalances.map(({ wallet, balance }) => {
+      const selected = wallet.id === walletId; const unavailable = balance <= 0;
+      return <Pressable key={wallet.id} style={[styles.potWalletOption, selected && styles.potWalletOptionActive, unavailable && styles.potWalletOptionUnavailable]} onPress={() => setWalletId(wallet.id)} disabled={unavailable}><View style={[styles.potWalletColor, { backgroundColor: wallet.color }]}><Feather name="credit-card" size={14} color="#FFFFFF" /></View><View style={styles.flex}><Text style={styles.potWalletName}>{wallet.name}</Text><Text style={styles.potWalletBalance}>{unavailable ? "Sem saldo disponível" : `${money(balance)} disponíveis`}</Text></View>{selected && <View style={styles.potWalletCheck}><Feather name="check" size={14} color="#FFFFFF" /></View>}</Pressable>;
+    })}</View>
     <Text style={styles.fieldLabel}>Escolha um valor rápido</Text>
     <View style={styles.quickDepositRow}>
       {[100, 150, 200].map(amount => <Pressable key={amount} style={[styles.quickDeposit, selectedValue === amount && styles.quickDepositActive]} onPress={() => { setSelectedValue(amount); setCustomValue(""); }}><Text style={[styles.quickDepositText, selectedValue === amount && styles.quickDepositTextActive]}>{money(amount)}</Text></Pressable>)}
     </View>
     <Field label="Outro valor" value={customValue} onChange={(text) => { setCustomValue(text); setSelectedValue(null); }} placeholder="R$ 0,00" keyboardType="decimal-pad" />
     {value > remaining && remaining > 0 && <Text style={styles.potOverGoal}>Esse aporte passa a meta em {money(value - remaining)}. Pode comemorar adiantado.</Text>}
-    <PrimaryButton label={`Guardar ${value > 0 ? money(value) : "dinheiro"}`} onPress={() => value > 0 && onSave(value)} disabled={!value || value <= 0} />
+    {insufficientBalance && selectedWallet && <Text style={styles.potInsufficientText}>Faltam {money(value - selectedWallet.balance)} na carteira {selectedWallet.wallet.name}.</Text>}
+    {canSave && selectedWallet && <View style={styles.potTransferPreview}><Text style={styles.potTransferPreviewLabel}>DEPOIS DA TRANSFERÊNCIA</Text><Text style={styles.potTransferPreviewText}>{selectedWallet.wallet.name} fica com {money(selectedWallet.balance - value)} · Meus sonhos vai para {money(dreamsBalance + value)}</Text></View>}
+    <PrimaryButton label={`Mover ${value > 0 ? money(value) : "dinheiro"} para o sonho`} onPress={() => canSave && onSave(value, walletId)} disabled={!canSave} />
+  </Sheet>;
+}
+
+function SavingsPotDeleteModal({ visible, pot, wallets, onClose, onDelete }: { visible: boolean; pot: SavingsPot | null; wallets: Wallet[]; onClose: () => void; onDelete: (mode: "return" | "discard") => void }) {
+  const principal = pot?.contributions.reduce((sum, contribution) => sum + contribution.value, 0) ?? 0;
+  const saved = pot ? getSavingsPotBalance(pot) : 0;
+  const sourceWallets = pot ? [...new Set(pot.contributions.map((contribution) => wallets.find((wallet) => wallet.id === contribution.walletId)?.name).filter((name): name is string => Boolean(name)))] : [];
+  const walletCopy = sourceWallets.length ? sourceWallets.join(", ") : "as carteiras de origem";
+  return <Sheet visible={visible} title={`Apagar ${pot?.name ?? "cofrinho"}?`} subtitle="Escolha o que acontece com o dinheiro antes de excluir." onClose={onClose}>
+    <View style={styles.potDeleteSummary}>
+      <View style={styles.potDeleteSummaryIcon}><MaterialCommunityIcons name="piggy-bank-outline" size={24} color={COLORS.grape} /></View>
+      <View style={styles.flex}><Text style={styles.potDeleteSummaryLabel}>VALOR DO COFRINHO</Text><Text style={styles.potDeleteSummaryValue}>{money(saved)}</Text><Text style={styles.potDeleteSummaryText}>{pot?.contributions.length ?? 0} aporte{(pot?.contributions.length ?? 0) === 1 ? "" : "s"} registrado{(pot?.contributions.length ?? 0) === 1 ? "" : "s"}</Text></View>
+    </View>
+    {principal > 0 ? <>
+      <Pressable style={styles.potDeleteReturnButton} onPress={() => onDelete("return")}>
+        <View style={styles.potDeleteChoiceIcon}><MaterialCommunityIcons name="swap-horizontal" size={21} color={COLORS.grape} /></View>
+        <View style={styles.flex}><Text style={styles.potDeleteReturnTitle}>Devolver e apagar</Text><Text style={styles.potDeleteChoiceText}>Os aportes voltam para {walletCopy}{saved - principal >= 0.01 ? ", incluindo o rendimento calculado" : ""}.</Text></View>
+        <Feather name="chevron-right" size={19} color={COLORS.grape} />
+      </Pressable>
+      <Pressable style={styles.potDeleteDiscardButton} onPress={() => onDelete("discard")}>
+        <View style={styles.potDeleteDiscardIcon}><Feather name="trash-2" size={19} color="#B54337" /></View>
+        <View style={styles.flex}><Text style={styles.potDeleteDiscardTitle}>Apagar sem devolver</Text><Text style={styles.potDeleteChoiceText}>O histórico do cofrinho some e os valores não voltam ao saldo disponível.</Text></View>
+      </Pressable>
+    </> : <Pressable style={styles.potDeleteEmptyButton} onPress={() => onDelete("discard")}><Feather name="trash-2" size={16} color="#FFFFFF" /><Text style={styles.potDeleteEmptyButtonText}>Apagar cofrinho vazio</Text></Pressable>}
+    <Text style={styles.potDeleteWarning}>Essa ação não pode ser desfeita.</Text>
   </Sheet>;
 }
 
@@ -1340,7 +1628,7 @@ function LifeSpentCalculatorModal({ visible, entries, goal, savingsPots, onClose
       const pots = savingsPots.map(pot => ({
         name: pot.name,
         goal: pot.goal,
-        saved: pot.contributions.reduce((sum, contribution) => sum + contribution.value, 0),
+        saved: getSavingsPotBalance(pot),
       }));
       const response = await fetch(useGeminiProxy ? "/api/gemini" : "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent", {
         method: "POST",
@@ -1421,20 +1709,205 @@ Não invente necessidade, parcelamento, juros ou utilidade do produto.
   </Sheet>;
 }
 
-function ProfileModal({ visible, goal, userName, userEmail, userInitials, onClose, onSave, onSignOut }: {
+function BankImportModal({ visible, wallets, existingEntries, onClose, onImport }: {
+  visible: boolean;
+  wallets: Wallet[];
+  existingEntries: Entry[];
+  onClose: () => void;
+  onImport: (entries: Omit<Entry, "id">[]) => void;
+}) {
+  const [drafts, setDrafts] = useState<BankImportDraft[]>([]);
+  const [fileInfo, setFileInfo] = useState<{ fileName: string; bankName: string; ignoredRows: number } | null>(null);
+  const [walletId, setWalletId] = useState("");
+  const [reading, setReading] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (!visible) return;
+    setDrafts([]);
+    setFileInfo(null);
+    setWalletId(wallets[0]?.id ?? "");
+    setReading(false);
+    setError("");
+  }, [visible]);
+  const loadFile = async (file: File) => {
+    if (file.size > 8 * 1024 * 1024) throw new Error("Esse CSV passou de 8 MB. Exporte um período menor e tente novamente.");
+    const statement = parseBankCsv(await file.text(), file.name);
+    const importedIds = new Set(existingEntries.map((entry) => entry.importId).filter(Boolean));
+    setDrafts(statement.transactions.map((transaction) => {
+      const duplicate = importedIds.has(transaction.importId);
+      return { ...transaction, duplicate, selected: !duplicate && !transaction.transferLike };
+    }));
+    setFileInfo({ fileName: file.name, bankName: statement.bankName, ignoredRows: statement.ignoredRows });
+  };
+  const selectFile = () => {
+    setError("");
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".csv,text/csv,text/plain";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      setReading(true);
+      try { await loadFile(file); } catch (fileError) {
+        setDrafts([]);
+        setFileInfo(null);
+        setError(fileError instanceof Error ? fileError.message : "Não consegui ler esse arquivo.");
+      } finally { setReading(false); }
+    };
+    input.click();
+  };
+  const updateDraft = (importId: string, changes: Partial<BankImportDraft>) => setDrafts((current) => current.map((draft) => draft.importId === importId ? { ...draft, ...changes } : draft));
+  const selected = drafts.filter((draft) => draft.selected && !draft.duplicate);
+  const income = selected.filter((draft) => draft.kind === "income").reduce((sum, draft) => sum + draft.value, 0);
+  const expenses = selected.filter((draft) => draft.kind === "expense").reduce((sum, draft) => sum + draft.value, 0);
+  const invalid = selected.some((draft) => !draft.title.trim());
+  const submit = () => {
+    if (!fileInfo || !walletId || !selected.length || invalid) return;
+    onImport(selected.map((draft) => ({ title: draft.title.trim(), value: draft.value, kind: draft.kind, category: draft.category, walletId, createdAt: draft.createdAt, importId: draft.importId, importSource: fileInfo.bankName })));
+  };
+  return <Sheet visible={visible} title="Importar extrato" subtitle="O banco entrega as linhas. Você dá a palavra final." onClose={onClose}>
+    {!fileInfo ? <>
+      <View style={styles.bankImportHero}>
+        <View style={styles.bankImportHeroIcon}><MaterialCommunityIcons name="file-table-outline" size={30} color={COLORS.grape} /></View>
+        <Text style={styles.bankImportHeroTitle}>Traga o CSV, sem trazer a bagunça</Text>
+        <Text style={styles.bankImportHeroText}>Compatível com Inter e Nubank. Entradas, gastos, categorias e possíveis transferências são identificados para sua revisão.</Text>
+        <Pressable style={[styles.bankFileButton, reading && styles.buttonDisabled]} onPress={selectFile} disabled={reading}>{reading ? <ActivityIndicator color="#FFFFFF" /> : <Feather name="upload" size={18} color="#FFFFFF" />}<Text style={styles.bankFileButtonText}>{reading ? "Lendo o extrato..." : "Escolher arquivo CSV"}</Text></Pressable>
+      </View>
+      <View style={styles.bankImportSafety}><Feather name="check-circle" size={17} color="#66851D" /><Text style={styles.bankImportSafetyText}>Nada entra automaticamente. Transferências suspeitas e linhas repetidas ficam desmarcadas.</Text></View>
+      {error ? <View style={styles.bankImportError}><Feather name="alert-circle" size={17} color="#B54337" /><Text style={styles.bankImportErrorText}>{error}</Text></View> : null}
+    </> : <>
+      <View style={styles.bankFileSummary}><MaterialCommunityIcons name="bank-outline" size={24} color={COLORS.grape} /><View style={styles.flex}><Text style={styles.bankFileBank}>{fileInfo.bankName}</Text><Text style={styles.bankFileName} numberOfLines={1}>{fileInfo.fileName}</Text></View><Pressable style={styles.bankFileChange} onPress={selectFile}><Text style={styles.bankFileChangeText}>Trocar</Text></Pressable></View>
+      <Text style={styles.fieldLabel}>Em qual carteira esse extrato entra?</Text>
+      <View style={styles.walletOptions}>{wallets.map((wallet) => <Pressable key={wallet.id} style={[styles.walletOption, walletId === wallet.id && styles.walletOptionActive]} onPress={() => setWalletId(wallet.id)}><View style={[styles.colorDot, { backgroundColor: wallet.color }]} /><Text style={styles.walletOptionText}>{wallet.name}</Text>{walletId === wallet.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
+      {!wallets.length && <View style={styles.bankImportError}><Text style={styles.bankImportErrorText}>Crie uma carteira antes de importar.</Text></View>}
+      <View style={styles.bankImportTotals}><View style={styles.bankImportTotalBlock}><Text style={styles.bankImportTotalLabel}>SELECIONADAS</Text><Text style={styles.bankImportTotalValue}>{selected.length}</Text></View><View style={styles.bankImportTotalBlock}><Text style={styles.bankImportTotalLabel}>ENTRADAS</Text><Text style={styles.bankImportTotalMoney}>+ {money(income)}</Text></View><View style={styles.bankImportTotalBlock}><Text style={styles.bankImportTotalLabel}>GASTOS</Text><Text style={styles.bankImportTotalMoney}>− {money(expenses)}</Text></View></View>
+      {(drafts.some((draft) => draft.transferLike) || drafts.some((draft) => draft.duplicate) || fileInfo.ignoredRows > 0) && <View style={styles.bankReviewNotice}><MaterialCommunityIcons name="text-box-search-outline" size={19} color="#9A6810" /><Text style={styles.bankReviewNoticeText}>Linhas suspeitas, repetidas ou inválidas foram separadas. Revise antes de importar.</Text></View>}
+      <View style={styles.bankReviewHeader}><Text style={styles.bankReviewTitle}>O que entra no Nenero?</Text><Pressable onPress={() => setDrafts((current) => current.map((draft) => ({ ...draft, selected: false })))}><Text style={styles.bankReviewActionText}>Limpar</Text></Pressable></View>
+      <View style={styles.bankDraftList}>{drafts.map((draft) => <View key={draft.importId} style={[styles.bankDraftCard, !draft.selected && styles.bankDraftCardMuted, draft.duplicate && styles.bankDraftCardDuplicate]}>
+        <View style={styles.bankDraftTop}><Pressable style={[styles.bankDraftCheck, draft.selected && styles.bankDraftCheckActive]} onPress={() => !draft.duplicate && updateDraft(draft.importId, { selected: !draft.selected })} disabled={draft.duplicate}>{draft.selected && <Feather name="check" size={14} color="#FFFFFF" />}</Pressable><View style={styles.flex}><TextInput style={styles.bankDraftTitleInput} value={draft.title} onChangeText={(title) => updateDraft(draft.importId, { title })} editable={!draft.duplicate} /><Text style={styles.bankDraftOriginal} numberOfLines={2}>{draft.originalDescription}</Text></View><View style={styles.bankDraftValueBlock}><Text style={styles.bankDraftValue}>{draft.kind === "income" ? "+" : "−"} {money(draft.value)}</Text><Text style={styles.bankDraftDate}>{new Date(draft.createdAt).toLocaleDateString("pt-BR")}</Text></View></View>
+        <View style={styles.bankDraftMeta}><Text style={styles.bankDraftCategoryText}>{draft.category}</Text>{draft.transferLike && <Text style={styles.bankDraftReviewText}>REVISAR</Text>}{draft.duplicate && <Text style={styles.bankDraftDuplicateText}>JÁ IMPORTADA</Text>}</View>
+      </View>)}</View>
+      {invalid && <Text style={styles.bankImportValidation}>Toda movimentação selecionada precisa ter um nome.</Text>}
+      <PrimaryButton label={`Importar ${selected.length} movimentações`} onPress={submit} disabled={!walletId || !selected.length || invalid} />
+    </>}
+  </Sheet>;
+}
+
+function ProfileModal({ visible, goal, userName, userEmail, userInitials, onClose, onNameSave, onPasswordChange, onImportBank, onSave, onSignOut, themeMode, onThemeChange }: {
   visible: boolean;
   goal: string;
   userName: string;
   userEmail: string;
   userInitials: string;
   onClose: () => void;
+  onNameSave: (name: string) => Promise<void>;
+  onPasswordChange: (currentPassword: string, newPassword: string) => Promise<void>;
+  onImportBank: () => void;
   onSave: (goal: string) => void;
   onSignOut: () => void;
+  themeMode: ThemeMode;
+  onThemeChange: (mode: ThemeMode) => void;
 }) {
   const [draft, setDraft] = useState(goal);
-  useEffect(() => { if (visible) setDraft(goal); }, [visible, goal]);
+  const [nameDraft, setNameDraft] = useState(userName === "você" ? "" : userName);
+  const [nameError, setNameError] = useState("");
+  const [nameSaveStatus, setNameSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [passwordEditorOpen, setPasswordEditorOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordSaveStatus, setPasswordSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  useEffect(() => {
+    if (!visible) return;
+    setDraft(goal);
+    setNameDraft(userName === "você" ? "" : userName);
+    setNameError("");
+    setNameSaveStatus("idle");
+    setPasswordEditorOpen(false);
+    setCurrentPassword("");
+    setNewPassword("");
+    setPasswordConfirmation("");
+    setPasswordError("");
+    setPasswordSaveStatus("idle");
+  }, [visible, goal, userName]);
+  const saveName = async () => {
+    const normalizedName = nameDraft.trim().slice(0, 40);
+    const currentName = userName === "você" ? "" : userName.trim().slice(0, 40);
+    if (!normalizedName) {
+      setNameError("Digite um nome para continuar.");
+      setNameSaveStatus("idle");
+      return;
+    }
+    setNameDraft(normalizedName);
+    if (normalizedName === currentName) {
+      setNameError("");
+      setNameSaveStatus("idle");
+      return;
+    }
+    setNameSaveStatus("saving");
+    setNameError("");
+    try {
+      await onNameSave(normalizedName);
+      setNameSaveStatus("saved");
+    } catch (error) {
+      setNameError(error instanceof Error ? error.message : "Não foi possível salvar seu nome.");
+      setNameSaveStatus("idle");
+    }
+  };
+  const savePassword = async () => {
+    if (!currentPassword) {
+      setPasswordError("Digite sua senha atual.");
+      return;
+    }
+    if (newPassword.length < 8) {
+      setPasswordError("A nova senha precisa ter pelo menos 8 caracteres.");
+      return;
+    }
+    if (newPassword !== passwordConfirmation) {
+      setPasswordError("A confirmação não corresponde à nova senha.");
+      return;
+    }
+    if (newPassword === currentPassword) {
+      setPasswordError("A nova senha precisa ser diferente da atual.");
+      return;
+    }
+    setPasswordError("");
+    setPasswordSaveStatus("saving");
+    try {
+      await onPasswordChange(currentPassword, newPassword);
+      setCurrentPassword("");
+      setNewPassword("");
+      setPasswordConfirmation("");
+      setPasswordSaveStatus("saved");
+    } catch (error) {
+      setPasswordError(error instanceof Error ? error.message : "Não foi possível alterar a senha.");
+      setPasswordSaveStatus("idle");
+    }
+  };
   return <Sheet visible={visible} title="Seu perfil" subtitle="Diga ao Nenero onde você quer chegar." onClose={onClose}>
-    <View style={styles.profileCard}><View style={styles.profileAvatar}><Text style={styles.profileAvatarText}>{userInitials}</Text></View><View style={styles.flex}><Text style={styles.profileName}>{userName}</Text><Text style={styles.profileMeta}>{userEmail}</Text></View></View>
+    <View style={styles.profileCard}><View style={styles.profileAvatar}><Text style={styles.profileAvatarText}>{userInitials}</Text></View><View style={styles.flex}><Text style={styles.profileName} numberOfLines={1}>{userName}</Text><Text style={styles.profileMeta} numberOfLines={1}>{userEmail}</Text></View></View>
+    <View style={styles.profileNameEditor}>
+      <View style={styles.profileNameEditorHeader}>
+        <Text style={styles.fieldLabel}>Como quer ser chamado?</Text>
+        {nameSaveStatus === "saving" ? <View style={styles.profileNameStatus}><ActivityIndicator size="small" color={COLORS.grape} /><Text style={styles.profileNameStatusText}>Salvando...</Text></View> : null}
+        {nameSaveStatus === "saved" ? <View style={styles.profileNameStatus}><Feather name="check-circle" size={13} color="#66851D" /><Text style={styles.profileNameSavedText}>Salvo</Text></View> : null}
+      </View>
+      <TextInput
+        style={styles.input}
+        value={nameDraft}
+        onChangeText={(value) => { setNameDraft(value); setNameError(""); setNameSaveStatus("idle"); }}
+        onBlur={() => { void saveName(); }}
+        maxLength={40}
+        placeholder="Seu primeiro nome"
+        placeholderTextColor="#B4AFBB"
+        autoCapitalize="words"
+        returnKeyType="done"
+      />
+      {nameError ? <Text style={styles.profileNameError}>{nameError}</Text> : null}
+    </View>
+    <Text style={styles.fieldLabel}>Aparência</Text>
+    <View style={styles.themeSelector}>{(["system", "light", "dark"] as ThemeMode[]).map((mode) => <Pressable key={mode} style={[styles.themeOption, themeMode === mode && styles.themeOptionActive]} onPress={() => onThemeChange(mode)}><Feather name={mode === "system" ? "monitor" : mode === "light" ? "sun" : "moon"} size={15} color={themeMode === mode ? "#FFFFFF" : COLORS.muted} /><Text style={[styles.themeOptionText, themeMode === mode && styles.themeOptionTextActive]}>{mode === "system" ? "Sistema" : mode === "light" ? "Claro" : "Escuro"}</Text></Pressable>)}</View>
     <Text style={styles.fieldLabel}>Meu objetivo financeiro</Text>
     <TextInput
       style={styles.goalInput}
@@ -1448,13 +1921,40 @@ function ProfileModal({ visible, goal, userName, userEmail, userInitials, onClos
     />
     <Text style={styles.goalHint}>Escreva como se estivesse conversando com alguém. A IA usará esse objetivo para avaliar o mês.</Text>
     <PrimaryButton label="Salvar objetivo" onPress={() => onSave(draft.trim())} disabled={!draft.trim()} />
+    <View style={styles.profileSecuritySection}>
+      <Text style={styles.profileDataEyebrow}>SEGURANÇA</Text>
+      <Pressable style={styles.profileSecurityButton} onPress={() => { setPasswordEditorOpen((open) => !open); setPasswordError(""); setPasswordSaveStatus("idle"); }}>
+        <View style={styles.profileSecurityIcon}><Feather name="lock" size={19} color={COLORS.grape} /></View>
+        <View style={styles.flex}><Text style={styles.profileImportTitle}>Alterar senha</Text><Text style={styles.profileImportText}>Atualize a senha usada para entrar na sua conta.</Text></View>
+        <Feather name={passwordEditorOpen ? "chevron-up" : "chevron-down"} size={20} color={COLORS.grape} />
+      </Pressable>
+      {passwordEditorOpen ? <View style={styles.passwordEditor}>
+        <Text style={styles.fieldLabel}>Senha atual</Text>
+        <TextInput style={styles.input} value={currentPassword} onChangeText={(value) => { setCurrentPassword(value); setPasswordError(""); setPasswordSaveStatus("idle"); }} placeholder="Digite sua senha atual" placeholderTextColor="#B4AFBB" secureTextEntry autoComplete="current-password" />
+        <Text style={styles.fieldLabel}>Nova senha</Text>
+        <TextInput style={styles.input} value={newPassword} onChangeText={(value) => { setNewPassword(value); setPasswordError(""); setPasswordSaveStatus("idle"); }} placeholder="Pelo menos 8 caracteres" placeholderTextColor="#B4AFBB" secureTextEntry autoComplete="new-password" />
+        <Text style={styles.fieldLabel}>Confirmar nova senha</Text>
+        <TextInput style={styles.input} value={passwordConfirmation} onChangeText={(value) => { setPasswordConfirmation(value); setPasswordError(""); setPasswordSaveStatus("idle"); }} placeholder="Digite novamente" placeholderTextColor="#B4AFBB" secureTextEntry autoComplete="new-password" onSubmitEditing={() => { void savePassword(); }} />
+        {passwordError ? <Text style={styles.profileNameError}>{passwordError}</Text> : null}
+        {passwordSaveStatus === "saved" ? <View style={styles.passwordSuccess}><Feather name="check-circle" size={16} color="#66851D" /><Text style={styles.passwordSuccessText}>Senha alterada com sucesso.</Text></View> : null}
+        <PrimaryButton label={passwordSaveStatus === "saving" ? "Alterando senha..." : "Alterar senha"} onPress={() => { void savePassword(); }} disabled={passwordSaveStatus === "saving" || !currentPassword || !newPassword || !passwordConfirmation} />
+      </View> : null}
+    </View>
+    <View style={styles.profileDataSection}>
+      <Text style={styles.profileDataEyebrow}>TRAZER SEUS DADOS</Text>
+      <Pressable style={styles.profileImportButton} onPress={onImportBank}>
+        <View style={styles.profileImportIcon}><MaterialCommunityIcons name="file-table-outline" size={22} color={COLORS.grape} /></View>
+        <View style={styles.flex}><Text style={styles.profileImportTitle}>Importar extrato bancário</Text><Text style={styles.profileImportText}>Inter ou Nubank em CSV, com revisão antes de lançar.</Text></View>
+        <Feather name="chevron-right" size={20} color={COLORS.grape} />
+      </Pressable>
+    </View>
     <Pressable style={styles.signOutButton} onPress={onSignOut}><Feather name="log-out" size={16} color="#B54337" /><Text style={styles.signOutButtonText}>Sair desta conta</Text></Pressable>
   </Sheet>;
 }
 
 function AppLoadingScreen() {
   return <SafeAreaView style={styles.authSafe}>
-    <StatusBar style="dark" />
+    <StatusBar style={COLORS.paper === DARK_COLORS.paper ? "light" : "dark"} />
     <View style={styles.loadingScreen}>
       <View style={styles.authBrandMark}><Text style={styles.authBrandFace}>◡</Text></View>
       <ActivityIndicator color={COLORS.grape} />
@@ -1465,7 +1965,7 @@ function AppLoadingScreen() {
 
 function SupabaseSetupScreen() {
   return <SafeAreaView style={styles.authSafe}>
-    <StatusBar style="dark" />
+    <StatusBar style={COLORS.paper === DARK_COLORS.paper ? "light" : "dark"} />
     <View style={styles.setupScreen}>
       <View style={styles.authBrandMark}><Text style={styles.authBrandFace}>◡</Text></View>
       <Text style={styles.authTitle}>Falta ligar a nuvem</Text>
@@ -1475,6 +1975,97 @@ function SupabaseSetupScreen() {
         <Text style={styles.setupCodeText}>EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY</Text>
       </View>
     </View>
+  </SafeAreaView>;
+}
+
+function OnboardingScreen({ onComplete }: { onComplete: (data: OnboardingData) => Promise<void> }) {
+  const [step, setStep] = useState(0);
+  const [name, setName] = useState("");
+  const [walletName, setWalletName] = useState("");
+  const [walletBalance, setWalletBalance] = useState("");
+  const [monthlyIncome, setMonthlyIncome] = useState("");
+  const [incomeDay, setIncomeDay] = useState("5");
+  const [financialGoal, setFinancialGoal] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const steps = [
+    { eyebrow: "SEM CRACHÁ, PROMETEMOS", title: "Como te chamamos sem gritar “ei, você”?", copy: "Seu nome deixa os resumos mais pessoais. E evita que o Nenero invente um apelido duvidoso.", icon: "user" as const },
+    { eyebrow: "A CASINHA DO DINHEIRO", title: "Onde seus reais tiram uma soneca?", copy: "Crie sua carteira principal. Vale conta corrente, dinheiro ou conta digital — só não vale “debaixo do colchão”.", icon: "credit-card" as const },
+    { eyebrow: "ANTES DOS BOLETOS PERCEBEREM", title: "Quanto entra por mês?", copy: "Vamos programar sua renda para ela aparecer no planejamento antes que os boletos sintam o cheiro.", icon: "trending-up" as const },
+    { eyebrow: "UM PLANO CONTRA O IMPULSO", title: "Qual sonho vai mandar nas decisões?", copy: "Quando cada real tem um destino, fica mais difícil ele fugir misteriosamente no delivery.", icon: "target" as const },
+  ];
+  const current = steps[step]!;
+  const parsedIncome = parseMoneyInput(monthlyIncome);
+  const parsedBalance = parseMoneyInput(walletBalance) || 0;
+  const parsedIncomeDay = Number(incomeDay);
+  const valid = step === 0
+    ? name.trim().length >= 2
+    : step === 1
+      ? walletName.trim().length >= 2
+      : step === 2
+        ? Number.isFinite(parsedIncome) && parsedIncome > 0 && Number.isInteger(parsedIncomeDay) && parsedIncomeDay >= 1 && parsedIncomeDay <= 31
+        : financialGoal.trim().length >= 10;
+  const next = async () => {
+    if (!valid) return;
+    if (step < steps.length - 1) {
+      setStep((value) => value + 1);
+      setError("");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      await onComplete({
+        name: name.trim(),
+        walletName: walletName.trim(),
+        walletBalance: parsedBalance,
+        monthlyIncome: parsedIncome,
+        incomeDay: parsedIncomeDay,
+        financialGoal: financialGoal.trim(),
+      });
+    } catch (setupError) {
+      setError(setupError instanceof Error ? setupError.message : "Não foi possível concluir a configuração.");
+    } finally {
+      setLoading(false);
+    }
+  };
+  return <SafeAreaView style={styles.onboardingSafe}>
+    <StatusBar style={COLORS.paper === DARK_COLORS.paper ? "light" : "dark"} />
+    <KeyboardAvoidingView style={styles.onboardingKeyboard} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+      <View style={styles.onboardingTop}>
+        <View style={styles.onboardingBrand}><View style={styles.brandMark}><Text style={styles.brandFace}>◡</Text></View><Text style={styles.brand}>nenero</Text></View>
+        <Text style={styles.onboardingCount}>{step + 1}/{steps.length} · sem prova no final</Text>
+      </View>
+      <View style={styles.onboardingTrack}>{steps.map((_, index) => <View key={index} style={[styles.onboardingTrackPart, index <= step && styles.onboardingTrackPartActive]} />)}</View>
+      <ScrollView contentContainerStyle={styles.onboardingContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <View style={styles.onboardingIcon}><Feather name={current.icon} size={29} color={COLORS.grape} /></View>
+        <Text style={styles.onboardingEyebrow}>{current.eyebrow}</Text>
+        <Text style={styles.onboardingTitle}>{current.title}</Text>
+        <Text style={styles.onboardingCopy}>{current.copy}</Text>
+        <View style={styles.onboardingForm}>
+          {step === 0 && <Field label="Seu nome" value={name} onChange={setName} placeholder="Ex.: Willian" />}
+          {step === 1 && <>
+            <Field label="Nome da carteira" value={walletName} onChange={setWalletName} placeholder="Ex.: Conta principal" />
+            <Field label="Saldo atual (opcional)" value={walletBalance} onChange={setWalletBalance} placeholder="R$ 0,00" keyboardType="decimal-pad" />
+          </>}
+          {step === 2 && <>
+            <Field label="Renda líquida mensal" value={monthlyIncome} onChange={setMonthlyIncome} placeholder="R$ 3.500,00" keyboardType="decimal-pad" />
+            <Field label="Dia em que costuma receber" value={incomeDay} onChange={setIncomeDay} placeholder="Ex.: 5" keyboardType="number-pad" />
+            {parsedIncome > 0 && parsedIncomeDay >= 1 && parsedIncomeDay <= 31 && <View style={styles.onboardingPreview}><Feather name="repeat" size={16} color="#66851D" /><Text style={styles.onboardingPreviewText}>Pode avisar os boletos: {money(parsedIncome)} serão programados todo dia {parsedIncomeDay} na carteira {walletName || "principal"}.</Text></View>}
+          </>}
+          {step === 3 && <>
+            <Text style={styles.fieldLabel}>Meu objetivo financeiro</Text>
+            <TextInput style={styles.onboardingGoalInput} value={financialGoal} onChangeText={setFinancialGoal} placeholder="Ex.: Quero montar uma reserva de emergência e reduzir os gastos por impulso." placeholderTextColor="#A9A3B2" multiline maxLength={600} textAlignVertical="top" />
+            <View style={styles.onboardingReady}><View style={styles.onboardingReadyFace}><Text style={styles.onboardingReadyFaceText}>◡</Text></View><Text style={styles.onboardingReadyText}>Carteira, renda e objetivo vão entrar prontos. A parte de ficar milionário continua com você.</Text></View>
+          </>}
+          {error ? <Text style={styles.authError}>{error}</Text> : null}
+        </View>
+      </ScrollView>
+      <View style={styles.onboardingFooter}>
+        {step > 0 ? <Pressable style={styles.onboardingBack} onPress={() => setStep((value) => value - 1)} disabled={loading}><Feather name="arrow-left" size={18} color={COLORS.grape} /><Text style={styles.onboardingBackText}>Voltar</Text></Pressable> : <View style={styles.onboardingBackPlaceholder} />}
+        <Pressable style={[styles.onboardingNext, (!valid || loading) && styles.buttonDisabled]} onPress={next} disabled={!valid || loading}><Text style={styles.onboardingNextText}>{loading ? "Salvando..." : step === steps.length - 1 ? "Bora organizar isso" : "Continuar"}</Text><Feather name={step === steps.length - 1 ? "check" : "arrow-right"} size={18} color="#FFFFFF" /></Pressable>
+      </View>
+    </KeyboardAvoidingView>
   </SafeAreaView>;
 }
 
@@ -1498,7 +2089,7 @@ function AuthScreen() {
 
   const valid = email.includes("@") && password.length >= 6;
   return <SafeAreaView style={styles.authSafe}>
-    <StatusBar style="dark" />
+    <StatusBar style={COLORS.paper === DARK_COLORS.paper ? "light" : "dark"} />
     <KeyboardAvoidingView style={styles.authKeyboard} behavior={Platform.OS === "ios" ? "padding" : "height"}>
       <ScrollView contentContainerStyle={styles.authScroll} keyboardShouldPersistTaps="handled">
         <View style={styles.authBrandRow}><View style={styles.authBrandMark}><Text style={styles.authBrandFace}>◡</Text></View><Text style={styles.authBrand}>nenero</Text></View>
@@ -1539,14 +2130,59 @@ function PrimaryButton({ label, onPress, disabled }: { label: string; onPress: (
   return <Pressable style={[styles.primaryButton, disabled && styles.buttonDisabled]} onPress={onPress} disabled={disabled}><Text style={styles.primaryButtonText}>{label}</Text><Feather name="arrow-right" size={18} color="white" /></Pressable>;
 }
 
-const styles = StyleSheet.create({
+const DARK_LITERAL_COLORS: Record<string, string> = {
+  "#F0EBFF": "#29223B", "#F3EFFF": "#28213A", "#EEE8FF": "#29223B", "#F3EEFF": "#28213A",
+  "#EDE6FF": "#2B2340", "#EDE9F2": "#2B2738", "#E9E3FA": "#322846", "#D9CDF8": "#493A68",
+  "#DED3FF": "#493A68", "#BFAFF0": "#67528F", "#BBA7F4": "#67528F", "#B9A8EC": "#67528F", "#B9A6EE": "#67528F",
+  "#EAF8D0": "#233019", "#F0F9D9": "#26351A", "#58721B": "#C9F45A", "#66851D": "#B9E45A",
+  "#65861E": "#B9E45A", "#789B22": "#C9F45A", "#71804A": "#B5C98B",
+  "#FFF0ED": "#321E21", "#FFF7F5": "#2A1B20", "#FFE0DC": "#442326", "#F0BEB8": "#71383A",
+  "#B54337": "#FF9B8F", "#C95043": "#FF9B8F", "#FFF0CA": "#332916", "#D69A20": "#F3C765", "#9A6810": "#E6B957",
+  "#E4F7F3": "#17342F", "#F2FBF8": "#142B27", "#CBE9E1": "#315B53", "#167B6B": "#62D7C3",
+  "#125F54": "#83E3D2", "#467970": "#9BCFC6", "#36758C": "#79C9E8", "#277493": "#83CBE4", "#4D7481": "#9CC7D4",
+  "#D3CEDA": "#4A4455", "#AAA4B3": "#AAA3B8", "#575162": "#C7C1D2", "#45402E": "#D3CDA9", "#D7D1E0": "#D7D1E0",
+};
+const applyLiteralTheme = <T,>(value: T): T => {
+  if (typeof value === "string") return (DARK_LITERAL_COLORS[value.toUpperCase()] ?? value) as T;
+  if (Array.isArray(value)) return value.map(applyLiteralTheme) as T;
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, applyLiteralTheme(item)])) as T;
+  return value;
+};
+const createStyleDefinition = () => ({
   safe: { flex: 1, backgroundColor: COLORS.paper },
+  onboardingSafe: { flex: 1, backgroundColor: "#F6F2FF" },
+  onboardingKeyboard: { flex: 1 },
+  onboardingTop: { height: 64, paddingHorizontal: 22, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  onboardingBrand: { flexDirection: "row", alignItems: "center", gap: 9 },
+  onboardingCount: { color: COLORS.muted, fontSize: 11, fontWeight: "800" },
+  onboardingTrack: { flexDirection: "row", gap: 7, paddingHorizontal: 22 },
+  onboardingTrackPart: { flex: 1, height: 5, borderRadius: 3, backgroundColor: "#DED7EA" },
+  onboardingTrackPartActive: { backgroundColor: COLORS.grape },
+  onboardingContent: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 42, paddingBottom: 24, maxWidth: 540, width: "100%", alignSelf: "center" },
+  onboardingIcon: { width: 64, height: 64, borderRadius: 22, backgroundColor: COLORS.white, borderWidth: 1, borderColor: "#DFD5FA", alignItems: "center", justifyContent: "center", shadowColor: COLORS.grapeDark, shadowOpacity: 0.1, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 4, transform: [{ rotate: "-4deg" }] },
+  onboardingEyebrow: { color: COLORS.grape, fontSize: 9, fontWeight: "900", letterSpacing: 1.4, marginTop: 28 },
+  onboardingTitle: { color: COLORS.ink, fontSize: 34, lineHeight: 39, fontWeight: "900", letterSpacing: -1.4, marginTop: 7, maxWidth: 400 },
+  onboardingCopy: { color: COLORS.muted, fontSize: 13, lineHeight: 19, marginTop: 11, maxWidth: 430 },
+  onboardingForm: { marginTop: 32 },
+  onboardingGoalInput: { minHeight: 150, backgroundColor: COLORS.white, borderWidth: 1, borderColor: "#DCD4E7", borderRadius: 20, padding: 16, color: COLORS.ink, fontSize: 14, lineHeight: 21 },
+  onboardingPreview: { flexDirection: "row", alignItems: "flex-start", gap: 10, backgroundColor: "#EAF8D0", borderRadius: 15, padding: 13, marginTop: 2 },
+  onboardingPreviewText: { flex: 1, color: "#58721B", fontSize: 10, lineHeight: 15, fontWeight: "700" },
+  onboardingReady: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: COLORS.lime, borderRadius: 18, padding: 14, marginTop: 16 },
+  onboardingReadyFace: { width: 38, height: 38, borderRadius: 13, backgroundColor: COLORS.ink, alignItems: "center", justifyContent: "center", transform: [{ rotate: "-4deg" }] },
+  onboardingReadyFaceText: { color: COLORS.lime, fontSize: 24, fontWeight: "900", marginTop: -6 },
+  onboardingReadyText: { flex: 1, color: "#3D3A2C", fontSize: 10, lineHeight: 15, fontWeight: "800" },
+  onboardingFooter: { minHeight: 82, paddingHorizontal: 22, paddingTop: 12, paddingBottom: 14, borderTopWidth: 1, borderTopColor: "#E6DFEE", backgroundColor: "rgba(246,242,255,0.97)", flexDirection: "row", alignItems: "center", gap: 12 },
+  onboardingBack: { height: 52, minWidth: 90, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7 },
+  onboardingBackText: { color: COLORS.grape, fontSize: 12, fontWeight: "900" },
+  onboardingBackPlaceholder: { width: 90 },
+  onboardingNext: { flex: 1, height: 54, borderRadius: 17, backgroundColor: COLORS.grape, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 9, shadowColor: COLORS.grapeDark, shadowOpacity: 0.2, shadowRadius: 12, shadowOffset: { width: 0, height: 7 }, elevation: 5 },
+  onboardingNextText: { color: "#FFFFFF", fontSize: 13, fontWeight: "900" },
   authSafe: { flex: 1, backgroundColor: "#F3EEFF" },
   authKeyboard: { flex: 1 },
   authScroll: { flexGrow: 1, justifyContent: "center", padding: 24, maxWidth: 480, width: "100%", alignSelf: "center" },
   authBrandRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 30 },
   authBrandMark: { width: 44, height: 44, borderRadius: 15, backgroundColor: COLORS.grape, alignItems: "center", justifyContent: "center", transform: [{ rotate: "-5deg" }] },
-  authBrandFace: { color: COLORS.white, fontSize: 30, fontWeight: "900", marginTop: -7 },
+  authBrandFace: { color: "#FFFFFF", fontSize: 30, fontWeight: "900", marginTop: -7 },
   authBrand: { color: COLORS.ink, fontSize: 29, fontWeight: "900", letterSpacing: -1.5 },
   authTitle: { color: COLORS.ink, fontSize: 31, lineHeight: 36, fontWeight: "900", letterSpacing: -1.2 },
   authSubtitle: { color: COLORS.muted, fontSize: 13, lineHeight: 19, marginTop: 9, marginBottom: 22 },
@@ -1586,18 +2222,24 @@ const styles = StyleSheet.create({
   balanceCard: { minHeight: 245, borderRadius: 28, padding: 24, overflow: "hidden", shadowColor: COLORS.grapeDark, shadowOpacity: 0.22, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 9 },
   balanceGlow: { position: "absolute", width: 190, height: 190, borderRadius: 95, backgroundColor: "rgba(201,244,90,0.15)", top: -85, right: -45 },
   balanceHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
-  balanceLabel: { color: "#DED3FF", fontSize: 13, fontWeight: "700" },
+  balanceLabel: { color: "rgba(255,255,255,0.78)", fontSize: 13, fontWeight: "700" },
   balanceAiBadge: { minHeight: 25, borderRadius: 13, paddingHorizontal: 9, flexDirection: "row", alignItems: "center", gap: 5 },
-  balanceAiBadgeText: { color: COLORS.ink, fontSize: 8, fontWeight: "900", letterSpacing: 0.5 },
+  balanceAiBadgeText: { color: "#242033", fontSize: 8, fontWeight: "900", letterSpacing: 0.5 },
   balanceValue: { color: "white", fontSize: 39, fontWeight: "900", letterSpacing: -1.8, marginTop: 7 },
-  balanceCopy: { color: "#E9E3FA", fontSize: 13, marginTop: 7, marginBottom: 23 },
+  balanceCopy: { color: "rgba(255,255,255,0.86)", fontSize: 13, marginTop: 7, marginBottom: 23 },
   balanceAnalysis: { marginTop: 7, marginBottom: 18 },
-  balanceAnalysisHeadline: { color: COLORS.white, fontSize: 14, fontWeight: "900" },
-  balanceAnalysisSummary: { color: "#E9E3FA", fontSize: 11, lineHeight: 16, marginTop: 4 },
+  balanceAnalysisHeadline: { color: "#FFFFFF", fontSize: 14, fontWeight: "900" },
+  balanceAnalysisSummary: { color: "rgba(255,255,255,0.78)", fontSize: 11, lineHeight: 16, marginTop: 4 },
   whiteButton: { alignSelf: "flex-start", backgroundColor: "white", flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 14 },
-  whiteButtonText: { color: COLORS.grapeDark, fontWeight: "800", fontSize: 13 },
+  whiteButtonText: { color: "#532CB8", fontWeight: "800", fontSize: 13 },
   metricsRow: { flexDirection: "row", gap: 12, marginTop: 14 },
   metricCard: { flex: 1, padding: 16, borderRadius: 20 },
+  metricIncomeCard: { backgroundColor: COLORS.paper === DARK_COLORS.paper ? "#17251A" : "#EAF8D0", borderWidth: 1, borderColor: COLORS.paper === DARK_COLORS.paper ? "#35502E" : "#D6E9AD" },
+  metricExpenseCard: { backgroundColor: COLORS.paper === DARK_COLORS.paper ? "#2B1A1E" : "#FFF0ED", borderWidth: 1, borderColor: COLORS.paper === DARK_COLORS.paper ? "#563038" : "#F5D2CD" },
+  metricIncomeLabel: { color: COLORS.paper === DARK_COLORS.paper ? "#AFC49B" : "#58721B" },
+  metricExpenseLabel: { color: COLORS.paper === DARK_COLORS.paper ? "#D6AAA5" : "#B65A4F" },
+  metricIncomeValue: { color: COLORS.paper === DARK_COLORS.paper ? "#F4F0FA" : "#242033" },
+  metricExpenseValue: { color: COLORS.paper === DARK_COLORS.paper ? "#F4F0FA" : "#242033" },
   iconBubble: { width: 30, height: 30, borderRadius: 11, justifyContent: "center", alignItems: "center", marginBottom: 13 },
   metricLabel: { color: COLORS.muted, fontSize: 11, fontWeight: "700" },
   metricValue: { color: COLORS.ink, fontSize: 17, fontWeight: "900", marginTop: 4, letterSpacing: -0.5 },
@@ -1606,11 +2248,7 @@ const styles = StyleSheet.create({
   sectionTitle: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 26, marginBottom: 12 },
   sectionTitleText: { color: COLORS.ink, fontSize: 16, fontWeight: "900", letterSpacing: -0.3 },
   sectionAction: { color: COLORS.grape, fontSize: 12, fontWeight: "800" },
-  quickRow: { flexDirection: "row", gap: 10 },
-  quickAction: { flex: 1, minHeight: 102, backgroundColor: COLORS.white, borderRadius: 18, padding: 13, justifyContent: "space-between", borderWidth: 1, borderColor: COLORS.line },
   pressed: { transform: [{ scale: 0.97 }], opacity: 0.85 },
-  quickIcon: { width: 36, height: 36, backgroundColor: "#F0EBFF", borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  quickLabel: { color: COLORS.ink, fontSize: 12, lineHeight: 15, fontWeight: "800" },
   lifeFeatureCard: { minHeight: 76, backgroundColor: "#EEE8FF", borderRadius: 19, padding: 14, marginTop: 10, flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: "#D9CDF8" },
   lifeFeatureIcon: { width: 43, height: 43, borderRadius: 14, backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center" },
   lifeFeatureEyebrow: { color: COLORS.grape, fontSize: 8, fontWeight: "900", letterSpacing: 0.7 },
@@ -1652,7 +2290,7 @@ const styles = StyleSheet.create({
   filterChip: { minHeight: 37, paddingHorizontal: 13, borderRadius: 18, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.line, flexDirection: "row", alignItems: "center", gap: 7 },
   filterChipActive: { backgroundColor: COLORS.grape, borderColor: COLORS.grape },
   filterChipText: { color: COLORS.muted, fontSize: 11, fontWeight: "800" },
-  filterChipTextActive: { color: COLORS.white },
+  filterChipTextActive: { color: "#FFFFFF" },
   filterDot: { width: 8, height: 8, borderRadius: 4 },
   emptyState: { backgroundColor: COLORS.white, borderRadius: 20, padding: 28, alignItems: "center", borderWidth: 1, borderColor: COLORS.line },
   emptyIcon: { width: 44, height: 44, borderRadius: 15, backgroundColor: "#F0EBFF", alignItems: "center", justifyContent: "center", marginBottom: 12 },
@@ -1681,7 +2319,7 @@ const styles = StyleSheet.create({
   paidBadgeText: { color: "#66851D", fontSize: 9, fontWeight: "900" },
   pendingBadgeText: { color: "#C95043", fontSize: 9, fontWeight: "900" },
   payButton: { backgroundColor: COLORS.grape, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9, flexDirection: "row", alignItems: "center", gap: 5 },
-  payButtonText: { color: COLORS.white, fontSize: 10, fontWeight: "900" },
+  payButtonText: { color: "#FFFFFF", fontSize: 10, fontWeight: "900" },
   pauseButton: { backgroundColor: "#F0EBFF", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 9, flexDirection: "row", alignItems: "center", gap: 5 },
   pauseButtonText: { color: COLORS.grape, fontSize: 10, fontWeight: "900" },
   disabledRow: { opacity: 0.48 },
@@ -1691,17 +2329,31 @@ const styles = StyleSheet.create({
   dateBig: { color: COLORS.grapeDark, fontSize: 18, fontWeight: "900" },
   walletCard: { minHeight: 162, borderRadius: 25, padding: 20, marginBottom: 14, shadowColor: COLORS.ink, shadowOpacity: 0.1, shadowRadius: 12, shadowOffset: { width: 0, height: 7 }, elevation: 4 },
   walletTop: { flexDirection: "row", justifyContent: "space-between" },
+  walletEditBadge: { width: 34, height: 34, borderRadius: 12, backgroundColor: "rgba(255,255,255,0.18)", alignItems: "center", justifyContent: "center" },
   walletDots: { color: "rgba(255,255,255,0.7)", letterSpacing: 2 },
   walletName: { color: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: "700", marginTop: 29 },
   walletBalance: { color: "white", fontSize: 26, fontWeight: "900", marginTop: 4, letterSpacing: -0.8 },
   dashedButton: { height: 58, borderWidth: 1.5, borderStyle: "dashed", borderColor: "#B9A8EC", borderRadius: 18, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 },
   dashedText: { color: COLORS.grape, fontSize: 12, fontWeight: "800" },
+  dreamWalletPressable: { borderRadius: 27, marginTop: 24, shadowColor: "#33245E", shadowOpacity: 0.2, shadowRadius: 18, shadowOffset: { width: 0, height: 10 }, elevation: 7 },
+  dreamWalletCard: { borderRadius: 27, padding: 20, overflow: "hidden" },
+  dreamWalletTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  dreamWalletIcon: { width: 43, height: 43, borderRadius: 15, backgroundColor: COLORS.lime, alignItems: "center", justifyContent: "center", transform: [{ rotate: "-5deg" }] },
+  dreamWalletAutoBadge: { minHeight: 25, borderRadius: 13, paddingHorizontal: 9, backgroundColor: "rgba(255,255,255,0.13)", borderWidth: 1, borderColor: "rgba(255,255,255,0.17)", alignItems: "center", justifyContent: "center" },
+  dreamWalletAutoText: { color: "#E8DFFF", fontSize: 7, fontWeight: "900", letterSpacing: 0.8 },
+  dreamWalletLabel: { color: "#DCD1F7", fontSize: 12, fontWeight: "800", marginTop: 20 },
+  dreamWalletBalance: { color: "#FFFFFF", fontSize: 30, fontWeight: "900", letterSpacing: -1, marginTop: 3 },
+  dreamWalletCopy: { color: "#DCD3EF", fontSize: 10, lineHeight: 15, marginTop: 6 },
+  dreamWalletOpen: { minHeight: 36, marginTop: 15, paddingTop: 12, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.13)", flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  dreamWalletOpenText: { color: COLORS.lime, fontSize: 10, fontWeight: "900" },
   potCard: { backgroundColor: COLORS.white, borderRadius: 23, padding: 18, marginBottom: 14, borderWidth: 1, borderColor: COLORS.line },
   potTop: { flexDirection: "row", alignItems: "center", gap: 12 },
   potIcon: { width: 46, height: 46, borderRadius: 16, backgroundColor: "#F0EBFF", alignItems: "center", justifyContent: "center" },
   potName: { color: COLORS.ink, fontSize: 16, fontWeight: "900" },
   potDescription: { color: COLORS.muted, fontSize: 10, lineHeight: 14, marginTop: 3 },
+  potTopActions: { alignItems: "flex-end", gap: 7 },
   potPercent: { color: COLORS.grape, fontSize: 16, fontWeight: "900" },
+  potDeleteIcon: { width: 31, height: 31, borderRadius: 11, borderWidth: 1, borderColor: "#F0BEB8", backgroundColor: "#FFF7F5", alignItems: "center", justifyContent: "center" },
   potProgressTrack: { height: 10, backgroundColor: "#EDE9F2", borderRadius: 5, overflow: "hidden", marginTop: 18 },
   potProgressFill: { height: "100%", backgroundColor: COLORS.lime, borderRadius: 5 },
   potValues: { flexDirection: "row", justifyContent: "space-between", marginTop: 14 },
@@ -1710,12 +2362,16 @@ const styles = StyleSheet.create({
   potGoalBlock: { alignItems: "flex-end" },
   potGoal: { color: COLORS.muted, fontSize: 15, fontWeight: "800", marginTop: 5 },
   potPlan: { color: COLORS.muted, fontSize: 10, marginTop: 8 },
+  potYieldBadge: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#E4F7F3", borderRadius: 11, paddingHorizontal: 9, paddingVertical: 7, marginTop: 9 },
+  potYieldText: { color: "#167B6B", fontSize: 9, fontWeight: "800" },
+  potSourceLine: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 9 },
+  potSourceText: { flex: 1, color: COLORS.muted, fontSize: 9, fontWeight: "700" },
   potDepositButton: { height: 45, backgroundColor: COLORS.grape, borderRadius: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, marginTop: 16 },
-  potDepositButtonText: { color: COLORS.white, fontSize: 12, fontWeight: "900" },
+  potDepositButtonText: { color: "#FFFFFF", fontSize: 12, fontWeight: "900" },
   potComplete: { minHeight: 45, backgroundColor: "#EAF8D0", borderRadius: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, marginTop: 16 },
   potCompleteText: { color: "#66851D", fontSize: 11, fontWeight: "900" },
   emptyPotButton: { backgroundColor: COLORS.grape, borderRadius: 13, paddingHorizontal: 16, paddingVertical: 11, marginTop: 16 },
-  emptyPotButtonText: { color: COLORS.white, fontSize: 11, fontWeight: "900" },
+  emptyPotButtonText: { color: "#FFFFFF", fontSize: 11, fontWeight: "900" },
   modalWrap: { flex: 1, justifyContent: "flex-end" },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(28,22,43,0.45)" },
   sheet: { maxHeight: "91%", backgroundColor: COLORS.paper, borderTopLeftRadius: 30, borderTopRightRadius: 30, paddingHorizontal: 20, paddingBottom: 28 },
@@ -1731,12 +2387,54 @@ const styles = StyleSheet.create({
   potDescriptionInput: { minHeight: 88, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.line, borderRadius: 15, padding: 14, color: COLORS.ink, fontSize: 13, lineHeight: 18, marginBottom: 16 },
   potPreview: { flexDirection: "row", alignItems: "center", gap: 9, backgroundColor: "#F0EBFF", borderRadius: 14, padding: 13, marginBottom: 16 },
   potPreviewText: { color: COLORS.grapeDark, fontSize: 11, fontWeight: "800" },
+  interestToggleCard: { flexDirection: "row", alignItems: "center", gap: 14, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.line, borderRadius: 17, padding: 14, marginBottom: 16 },
+  interestToggleCopy: { flex: 1 },
+  interestToggleTitle: { color: COLORS.ink, fontSize: 12, fontWeight: "900" },
+  interestToggleHint: { color: COLORS.muted, fontSize: 9, lineHeight: 14, marginTop: 4 },
+  interestFields: { backgroundColor: "#F2FBF8", borderWidth: 1, borderColor: "#CBE9E1", borderRadius: 18, padding: 14, marginBottom: 16 },
+  realRateCard: { flexDirection: "row", alignItems: "flex-start", gap: 10, backgroundColor: "#E4F7F3", borderRadius: 14, padding: 12 },
+  realRateLabel: { color: "#167B6B", fontSize: 8, fontWeight: "900", letterSpacing: 0.7 },
+  realRateValue: { color: "#125F54", fontSize: 17, fontWeight: "900", marginTop: 3 },
+  realRateHint: { color: "#467970", fontSize: 8, lineHeight: 12, marginTop: 2 },
   quickDepositRow: { flexDirection: "row", gap: 8, marginBottom: 18 },
+  potTransferNote: { flexDirection: "row", alignItems: "center", gap: 11, backgroundColor: "#F0EBFF", borderRadius: 16, padding: 13, marginBottom: 18 },
+  potTransferNoteText: { flex: 1, color: COLORS.grapeDark, fontSize: 9, lineHeight: 14, fontWeight: "700" },
+  potWalletOptions: { gap: 8, marginBottom: 20 },
+  potWalletOption: { minHeight: 58, borderRadius: 16, borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.white, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 10 },
+  potWalletOptionActive: { borderColor: COLORS.grape, backgroundColor: "#F7F4FF" },
+  potWalletOptionUnavailable: { opacity: 0.45 },
+  potWalletColor: { width: 35, height: 35, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  potWalletName: { color: COLORS.ink, fontSize: 11, fontWeight: "900" },
+  potWalletBalance: { color: COLORS.muted, fontSize: 9, marginTop: 3 },
+  potWalletCheck: { width: 24, height: 24, borderRadius: 12, backgroundColor: COLORS.grape, alignItems: "center", justifyContent: "center" },
+  potInsufficientText: { color: "#B54337", backgroundColor: "#FFF0ED", borderRadius: 12, padding: 11, fontSize: 10, fontWeight: "700", marginBottom: 14 },
+  potTransferPreview: { borderRadius: 14, padding: 13, backgroundColor: "#EAF8D0", marginBottom: 14 },
+  potTransferPreviewLabel: { color: "#66851D", fontSize: 8, fontWeight: "900", letterSpacing: 0.8 },
+  potTransferPreviewText: { color: "#4E6715", fontSize: 10, lineHeight: 15, fontWeight: "700", marginTop: 4 },
   quickDeposit: { flex: 1, height: 48, borderRadius: 14, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.line, alignItems: "center", justifyContent: "center" },
   quickDepositActive: { backgroundColor: COLORS.grape, borderColor: COLORS.grape },
   quickDepositText: { color: COLORS.ink, fontSize: 12, fontWeight: "900" },
-  quickDepositTextActive: { color: COLORS.white },
+  quickDepositTextActive: { color: "#FFFFFF" },
   potOverGoal: { color: "#66851D", backgroundColor: "#EAF8D0", fontSize: 10, lineHeight: 15, fontWeight: "700", borderRadius: 12, padding: 11, marginBottom: 14 },
+  potDeleteSummary: { minHeight: 86, borderRadius: 19, backgroundColor: "#F0EBFF", padding: 15, flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 14 },
+  potDeleteSummaryIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center" },
+  potDeleteSummaryLabel: { color: COLORS.grapeDark, fontSize: 8, fontWeight: "900", letterSpacing: 0.8 },
+  potDeleteSummaryValue: { color: COLORS.ink, fontSize: 21, fontWeight: "900", marginTop: 2 },
+  potDeleteSummaryText: { color: COLORS.muted, fontSize: 9, marginTop: 2 },
+  potDeleteReturnButton: { minHeight: 82, borderRadius: 18, borderWidth: 1, borderColor: "#D9CDF8", backgroundColor: COLORS.white, padding: 13, flexDirection: "row", alignItems: "center", gap: 11, marginBottom: 10 },
+  potDeleteChoiceIcon: { width: 40, height: 40, borderRadius: 14, backgroundColor: "#F0EBFF", alignItems: "center", justifyContent: "center" },
+  potDeleteReturnTitle: { color: COLORS.ink, fontSize: 12, fontWeight: "900" },
+  potDeleteChoiceText: { color: COLORS.muted, fontSize: 9, lineHeight: 14, marginTop: 3 },
+  potDeleteDiscardButton: { minHeight: 82, borderRadius: 18, borderWidth: 1, borderColor: "#F0BEB8", backgroundColor: "#FFF7F5", padding: 13, flexDirection: "row", alignItems: "center", gap: 11 },
+  potDeleteDiscardIcon: { width: 40, height: 40, borderRadius: 14, backgroundColor: "#FFE5E0", alignItems: "center", justifyContent: "center" },
+  potDeleteDiscardTitle: { color: "#B54337", fontSize: 12, fontWeight: "900" },
+  potDeleteEmptyButton: { minHeight: 50, borderRadius: 15, backgroundColor: "#B54337", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  potDeleteEmptyButtonText: { color: "#FFFFFF", fontSize: 11, fontWeight: "900" },
+  potDeleteWarning: { color: COLORS.muted, fontSize: 9, textAlign: "center", marginTop: 12 },
+  deleteEntryButton: { height: 50, borderRadius: 15, borderWidth: 1, borderColor: "#F0BEB8", backgroundColor: "#FFF7F5", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 12 },
+  deleteEntryButtonText: { color: "#B54337", fontSize: 11, fontWeight: "900" },
+  deleteWalletButton: { height: 50, borderRadius: 15, borderWidth: 1, borderColor: "#F0BEB8", backgroundColor: "#FFF7F5", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 12 },
+  deleteWalletButtonText: { color: "#B54337", fontSize: 11, fontWeight: "900" },
   lifeSalaryCard: { backgroundColor: COLORS.sky, borderRadius: 19, padding: 17, marginBottom: 18 },
   lifeSalaryLabel: { color: "#36758C", fontSize: 8, fontWeight: "900", letterSpacing: 0.8 },
   lifeSalaryValue: { color: COLORS.ink, fontSize: 25, fontWeight: "900", marginTop: 5 },
@@ -1744,7 +2442,7 @@ const styles = StyleSheet.create({
   lifeHoursHint: { color: COLORS.muted, fontSize: 9, lineHeight: 14, marginTop: -8, marginBottom: 15 },
   lifeResultCard: { backgroundColor: COLORS.ink, borderRadius: 20, padding: 18, marginTop: 16 },
   lifeResultEyebrow: { color: COLORS.lime, fontSize: 9, fontWeight: "900", letterSpacing: 1 },
-  lifeResultValue: { color: COLORS.white, fontSize: 25, fontWeight: "900", marginTop: 5 },
+  lifeResultValue: { color: "#FFFFFF", fontSize: 25, fontWeight: "900", marginTop: 5 },
   lifeResultCopy: { color: "#D7D1E0", fontSize: 10, lineHeight: 15, marginTop: 5 },
   lifeAiLoading: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "#F0EBFF", borderRadius: 15, padding: 14, marginTop: 12 },
   lifeAiLoadingText: { flex: 1, color: COLORS.grapeDark, fontSize: 10, fontWeight: "700" },
@@ -1777,6 +2475,54 @@ const styles = StyleSheet.create({
   walletOptionActive: { borderColor: "#B9A6EE", backgroundColor: "#F3EFFF" },
   colorDot: { width: 10, height: 10, borderRadius: 5 },
   walletOptionText: { flex: 1, color: COLORS.ink, fontSize: 12, fontWeight: "700" },
+  profileDataSection: { marginTop: 26, paddingTop: 22, borderTopWidth: 1, borderTopColor: COLORS.line },
+  profileDataEyebrow: { color: COLORS.muted, fontSize: 9, fontWeight: "900", letterSpacing: 1.2, marginBottom: 9 },
+  profileImportButton: { minHeight: 72, borderRadius: 18, borderWidth: 1, borderColor: "#D9CDF8", backgroundColor: "#F5F1FF", padding: 13, flexDirection: "row", alignItems: "center", gap: 11 },
+  profileImportIcon: { width: 43, height: 43, borderRadius: 14, backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center" },
+  profileImportTitle: { color: COLORS.ink, fontSize: 12, fontWeight: "900" },
+  profileImportText: { color: COLORS.muted, fontSize: 9, lineHeight: 13, marginTop: 3 },
+  bankImportHero: { borderRadius: 24, backgroundColor: "#F0EBFF", padding: 22, alignItems: "center", borderWidth: 1, borderColor: "#DED2FA" },
+  bankImportHeroIcon: { width: 62, height: 62, borderRadius: 21, backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center", transform: [{ rotate: "-4deg" }] },
+  bankImportHeroTitle: { color: COLORS.ink, fontSize: 20, lineHeight: 24, fontWeight: "900", letterSpacing: -0.5, textAlign: "center", marginTop: 17 },
+  bankImportHeroText: { color: COLORS.muted, fontSize: 10, lineHeight: 16, textAlign: "center", marginTop: 7, maxWidth: 330 },
+  bankFileButton: { minHeight: 50, alignSelf: "stretch", borderRadius: 15, backgroundColor: COLORS.grape, marginTop: 18, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  bankFileButtonText: { color: "#FFFFFF", fontSize: 12, fontWeight: "900" },
+  bankImportSafety: { flexDirection: "row", alignItems: "flex-start", gap: 9, borderRadius: 15, backgroundColor: "#EAF8D0", padding: 13, marginTop: 13 },
+  bankImportSafetyText: { flex: 1, color: "#58721B", fontSize: 9, lineHeight: 14, fontWeight: "700" },
+  bankImportError: { flexDirection: "row", alignItems: "flex-start", gap: 9, borderRadius: 15, backgroundColor: "#FFF0ED", padding: 13, marginTop: 12 },
+  bankImportErrorText: { flex: 1, color: "#B54337", fontSize: 10, lineHeight: 15, fontWeight: "700" },
+  bankFileSummary: { minHeight: 72, borderRadius: 18, borderWidth: 1, borderColor: "#D9CDF8", backgroundColor: "#F5F1FF", padding: 13, marginBottom: 19, flexDirection: "row", alignItems: "center", gap: 11 },
+  bankFileBank: { color: COLORS.ink, fontSize: 12, fontWeight: "900" },
+  bankFileName: { color: COLORS.muted, fontSize: 9, marginTop: 3, maxWidth: 230 },
+  bankFileChange: { minHeight: 32, borderRadius: 12, paddingHorizontal: 10, backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center" },
+  bankFileChangeText: { color: COLORS.grape, fontSize: 9, fontWeight: "900" },
+  bankImportTotals: { minHeight: 78, borderRadius: 18, backgroundColor: COLORS.ink, paddingHorizontal: 14, marginTop: 17, flexDirection: "row", alignItems: "center", gap: 11 },
+  bankImportTotalBlock: { flex: 1 },
+  bankImportTotalLabel: { color: "#AFA8BD", fontSize: 7, fontWeight: "900", letterSpacing: 0.7 },
+  bankImportTotalValue: { color: "#FFFFFF", fontSize: 22, fontWeight: "900", marginTop: 3 },
+  bankImportTotalMoney: { color: "#FFFFFF", fontSize: 10, fontWeight: "900", marginTop: 5 },
+  bankReviewNotice: { borderRadius: 15, backgroundColor: "#FFF0CA", padding: 13, marginTop: 12, flexDirection: "row", alignItems: "flex-start", gap: 9 },
+  bankReviewNoticeText: { flex: 1, color: "#815A10", fontSize: 9, lineHeight: 14, fontWeight: "700" },
+  bankReviewHeader: { marginTop: 25, marginBottom: 11, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  bankReviewTitle: { color: COLORS.ink, fontSize: 17, fontWeight: "900" },
+  bankReviewActionText: { color: COLORS.grape, fontSize: 9, fontWeight: "900" },
+  bankDraftList: { gap: 9, marginBottom: 18 },
+  bankDraftCard: { borderRadius: 18, borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.white, padding: 13 },
+  bankDraftCardMuted: { backgroundColor: "#F5F3F7" },
+  bankDraftCardDuplicate: { opacity: 0.62 },
+  bankDraftTop: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  bankDraftCheck: { width: 27, height: 27, borderRadius: 9, borderWidth: 1.5, borderColor: "#C9C3D0", backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center" },
+  bankDraftCheckActive: { borderColor: COLORS.grape, backgroundColor: COLORS.grape },
+  bankDraftTitleInput: { color: COLORS.ink, fontSize: 11, fontWeight: "900", padding: 0 },
+  bankDraftOriginal: { color: COLORS.muted, fontSize: 8, lineHeight: 12, marginTop: 3 },
+  bankDraftValueBlock: { alignItems: "flex-end", maxWidth: 110 },
+  bankDraftValue: { color: COLORS.ink, fontSize: 10, fontWeight: "900" },
+  bankDraftDate: { color: COLORS.muted, fontSize: 8, fontWeight: "700", marginTop: 4 },
+  bankDraftMeta: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 11 },
+  bankDraftCategoryText: { color: COLORS.grape, fontSize: 8, fontWeight: "900" },
+  bankDraftReviewText: { color: "#9A6810", fontSize: 7, fontWeight: "900", letterSpacing: 0.5 },
+  bankDraftDuplicateText: { color: COLORS.muted, fontSize: 7, fontWeight: "900", letterSpacing: 0.4 },
+  bankImportValidation: { color: "#B54337", fontSize: 10, fontWeight: "700", marginBottom: 12 },
   autoPostNote: { flexDirection: "row", alignItems: "center", gap: 9, backgroundColor: "#F0F9D9", borderRadius: 14, padding: 12, marginTop: 10 },
   autoPostText: { flex: 1, color: "#58721B", fontSize: 10, lineHeight: 14, fontWeight: "700" },
   profileCard: { flexDirection: "row", alignItems: "center", gap: 13, backgroundColor: COLORS.white, borderRadius: 18, padding: 14, borderWidth: 1, borderColor: COLORS.line, marginBottom: 20 },
@@ -1784,10 +2530,27 @@ const styles = StyleSheet.create({
   profileAvatarText: { color: COLORS.ink, fontSize: 14, fontWeight: "900" },
   profileName: { color: COLORS.ink, fontSize: 15, fontWeight: "900" },
   profileMeta: { color: COLORS.muted, fontSize: 10, marginTop: 3 },
+  profileNameEditor: { marginBottom: 24 },
+  profileNameEditorHeader: { minHeight: 20, flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
+  profileNameStatus: { flexDirection: "row", alignItems: "center", gap: 5 },
+  profileNameStatusText: { color: COLORS.grape, fontSize: 9, fontWeight: "800" },
+  profileNameSavedText: { color: "#66851D", fontSize: 9, fontWeight: "800" },
+  profileNameError: { color: "#B54337", fontSize: 10, lineHeight: 14, marginTop: 7 },
+  profileSecuritySection: { marginTop: 26, paddingTop: 22, borderTopWidth: 1, borderTopColor: COLORS.line },
+  profileSecurityButton: { minHeight: 68, borderRadius: 18, borderWidth: 1, borderColor: "#D9CDF8", backgroundColor: "#F5F1FF", padding: 13, flexDirection: "row", alignItems: "center", gap: 11 },
+  profileSecurityIcon: { width: 43, height: 43, borderRadius: 14, backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center" },
+  passwordEditor: { marginTop: 14, gap: 7 },
+  passwordSuccess: { flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 12, padding: 11, backgroundColor: "#F0F9D9", marginTop: 3 },
+  passwordSuccessText: { color: "#58721B", fontSize: 10, lineHeight: 15, fontWeight: "700" },
   signOutButton: { height: 48, borderRadius: 15, borderWidth: 1, borderColor: "#F0BEB8", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 12 },
   signOutButtonText: { color: "#B54337", fontSize: 11, fontWeight: "900" },
   goalInput: { minHeight: 130, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.line, borderRadius: 16, padding: 14, color: COLORS.ink, fontSize: 13, lineHeight: 19 },
   goalHint: { color: COLORS.muted, fontSize: 10, lineHeight: 15, marginTop: 8 },
+  themeSelector: { flexDirection: "row", gap: 8, marginBottom: 18 },
+  themeOption: { flex: 1, minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.white, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
+  themeOptionActive: { backgroundColor: COLORS.grape, borderColor: COLORS.grape },
+  themeOptionText: { color: COLORS.muted, fontSize: 10, fontWeight: "800" },
+  themeOptionTextActive: { color: "#FFFFFF" },
   analysisLoading: { paddingVertical: 50, alignItems: "center" },
   analysisLoadingTitle: { color: COLORS.ink, fontSize: 16, fontWeight: "900", marginTop: 18 },
   analysisLoadingText: { color: COLORS.muted, fontSize: 11, lineHeight: 16, textAlign: "center", marginTop: 7, maxWidth: 270 },
@@ -1812,6 +2575,11 @@ const styles = StyleSheet.create({
   primaryButtonText: { color: "white", fontSize: 13, fontWeight: "900" },
   buttonDisabled: { opacity: 0.38 },
 });
+const createStyles = () => {
+  const definition = createStyleDefinition();
+  return StyleSheet.create((COLORS.paper === DARK_COLORS.paper ? applyLiteralTheme(definition) : definition) as any);
+};
+let styles = createStyles();
 
 export default function App() {
   return <SafeAreaProvider><AppContent /></SafeAreaProvider>;

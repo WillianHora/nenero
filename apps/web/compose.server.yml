@@ -1,0 +1,12 @@
+services:
+  nenero:
+    image: nenero-web:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.runtime
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-${EXPO_PUBLIC_GEMINI_API_KEY:-}}
+      PORT: 8080
+    ports:
+      - "127.0.0.1:3000:8080"
+    restart: unless-stopped
