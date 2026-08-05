@@ -112,9 +112,38 @@ type ThemeMode = "system" | "light" | "dark";
 const THEME_STORAGE_KEY = "@nenero/theme";
 
 const walletPalette = ["#7147E8", "#FF7B6B", "#2DAE8C", "#E0A72B"];
-const categories = ["Mercado", "Casa", "Transporte", "Lazer", "Delivery", "Educação", "Saúde", "Assinatura", "Outros"];
+const expenseCategories = ["Mercado", "Casa", "Transporte", "Lazer", "Delivery", "Educação", "Saúde", "Assinatura", "Outros"];
 const incomeCategories = ["Salário", "Freelance", "Férias", "Bonificações", "13º salário", "Rendimentos", "Reembolso", "Venda", "Outras entradas"];
-const categoriesByKind: Record<EntryKind, string[]> = { expense: categories, income: incomeCategories };
+const categoriesByKind: Record<EntryKind, string[]> = { expense: expenseCategories, income: incomeCategories };
+type CategoryVisual = { icon: keyof typeof MaterialCommunityIcons.glyphMap; color: string; background: string; border: string };
+const categoryVisuals: Record<string, CategoryVisual> = {
+  Mercado: { icon: "cart-outline", color: "#2F7D5A", background: "#E8F6EF", border: "#C9E8D8" },
+  Casa: { icon: "home-heart", color: "#6B4BC3", background: "#F0EBFF", border: "#DDD1F8" },
+  Transporte: { icon: "car-outline", color: "#2E7198", background: "#E7F4FB", border: "#C9E5F3" },
+  Lazer: { icon: "party-popper", color: "#B65A4F", background: "#FFF0ED", border: "#F5D2CD" },
+  Delivery: { icon: "moped", color: "#B66A22", background: "#FFF3E3", border: "#F0D7B7" },
+  Educação: { icon: "school-outline", color: "#3E63A8", background: "#EAF0FF", border: "#CBD8F5" },
+  Saúde: { icon: "medical-bag", color: "#B94467", background: "#FFEAF1", border: "#F3C8D7" },
+  Assinatura: { icon: "calendar-sync", color: "#7C4C9D", background: "#F5EAFB", border: "#E3CCEE" },
+  Outros: { icon: "shape-outline", color: "#676270", background: "#F0EEF2", border: "#DEDAE2" },
+  Salário: { icon: "cash", color: "#5D7E1D", background: "#EEF8D9", border: "#D6E9AD" },
+  Renda: { icon: "cash", color: "#5D7E1D", background: "#EEF8D9", border: "#D6E9AD" },
+  Freelance: { icon: "laptop", color: "#5F52B6", background: "#EFEDFF", border: "#D8D3F7" },
+  Férias: { icon: "beach", color: "#A96B00", background: "#FFF4D9", border: "#F0DCAD" },
+  Bonificações: { icon: "medal-outline", color: "#8B6A05", background: "#FFF7D6", border: "#EBDD9F" },
+  Bonificação: { icon: "medal-outline", color: "#8B6A05", background: "#FFF7D6", border: "#EBDD9F" },
+  "13º salário": { icon: "gift-outline", color: "#A24879", background: "#FCEAF4", border: "#EECDE0" },
+  Rendimentos: { icon: "chart-line", color: "#167B6B", background: "#E4F7F3", border: "#C1E7DF" },
+  Investimentos: { icon: "chart-line", color: "#167B6B", background: "#E4F7F3", border: "#C1E7DF" },
+  Reembolso: { icon: "cash-refund", color: "#2B709F", background: "#E7F3FC", border: "#C7E0F1" },
+  Venda: { icon: "tag-outline", color: "#B45245", background: "#FFF0EC", border: "#F2D0C9" },
+  "Outras entradas": { icon: "cash-plus", color: "#59646C", background: "#EDF1F3", border: "#D5DDE1" },
+};
+const fallbackCategoryVisuals: Record<EntryKind, CategoryVisual> = {
+  expense: categoryVisuals.Outros!,
+  income: categoryVisuals["Outras entradas"]!,
+};
+const getCategoryVisual = (category: string, kind: EntryKind) => categoryVisuals[category] ?? fallbackCategoryVisuals[kind];
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const money = (value: number) => brl.format(value);
 const uid = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -1318,13 +1347,13 @@ function PageHeader({ eyebrow, title, button, onPress }: { eyebrow: string; titl
 }
 
 function EntryRow({ entry, wallet, last, onEdit }: { entry: Entry; wallet?: Wallet; last: boolean; onEdit?: () => void }) {
-  const icon = entry.category === "Mercado" ? "shopping-bag" : entry.category === "Lazer" ? "coffee" : entry.kind === "income" ? "briefcase" : "tag";
+  const visual = getCategoryVisual(entry.category, entry.kind);
   return (
     <View style={[styles.entryRow, !last && styles.entryBorder]}>
-      <View style={[styles.entryIcon, { backgroundColor: entry.kind === "income" ? "#EAF8D0" : "#F1ECFF" }]}><Feather name={icon} size={18} color={entry.kind === "income" ? "#6F8D20" : COLORS.grape} /></View>
+      <View style={[styles.entryIcon, { backgroundColor: visual.background, borderColor: visual.border }]}><MaterialCommunityIcons name={visual.icon} size={20} color={visual.color} /></View>
       <View style={styles.flex}>
         <Text style={styles.rowTitle}>{entry.title}</Text>
-        <Text style={styles.rowMeta}>{entry.category} · {new Date(entry.createdAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}</Text>
+        <View style={styles.entryMetaLine}><View style={[styles.entryCategoryBadge, { backgroundColor: visual.background }]}><Text style={[styles.entryCategoryBadgeText, { color: visual.color }]}>{entry.category}</Text></View><Text style={styles.entryDateText}>{new Date(entry.createdAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}</Text></View>
         {wallet && <View style={styles.entryWallet}><View style={[styles.entryWalletDot, { backgroundColor: wallet.color }]} /><Text style={styles.entryWalletText}>{wallet.name}</Text></View>}
       </View>
       <Text style={[styles.rowValue, entry.kind === "income" && styles.income]}>{entry.kind === "income" ? "+" : "−"} {money(entry.value)}</Text>
@@ -1361,11 +1390,17 @@ function Field({ label, value, onChange, placeholder, keyboardType, secureTextEn
   return <View style={styles.field}><Text style={styles.fieldLabel}>{label}</Text><TextInput style={styles.input} value={value} onChangeText={onChange} placeholder={placeholder} placeholderTextColor="#B4AFBB" keyboardType={keyboardType} secureTextEntry={secureTextEntry} autoCapitalize={keyboardType === "email-address" ? "none" : undefined} autoCorrect={keyboardType === "email-address" ? false : undefined} /></View>;
 }
 
+function CategoryChip({ category, kind, selected, onPress }: { category: string; kind: EntryKind; selected: boolean; onPress: () => void }) {
+  const visual = getCategoryVisual(category, kind);
+  return <Pressable style={[styles.chip, { borderColor: visual.border }, selected && { backgroundColor: visual.color, borderColor: visual.color }]} onPress={onPress} accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel={`Categoria ${category}`}><MaterialCommunityIcons name={visual.icon} size={15} color={selected ? COLORS.white : visual.color} /><Text style={[styles.chipText, selected && styles.chipTextActive]}>{category}</Text></Pressable>;
+}
+
 function EntryModal({ visible, wallets, item, onClose, onSave, onDelete }: { visible: boolean; wallets: Wallet[]; item: Entry | null; onClose: () => void; onSave: (entry: Omit<Entry, "id">) => void; onDelete?: () => void }) {
   const today = new Date();
-  const [kind, setKind] = useState<EntryKind>("expense"); const [title, setTitle] = useState(""); const [value, setValue] = useState(""); const [category, setCategory] = useState(categories[0]!); const [walletId, setWalletId] = useState(wallets[0]?.id ?? "");
+  const [kind, setKind] = useState<EntryKind>("expense"); const [title, setTitle] = useState(""); const [value, setValue] = useState(""); const [category, setCategory] = useState(expenseCategories[0]!); const [walletId, setWalletId] = useState(wallets[0]?.id ?? "");
   const [referenceMonth, setReferenceMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
   const [referenceDay, setReferenceDay] = useState(String(today.getDate()));
+  const activeCategories = categoriesByKind[kind];
   const parsedDay = Number(referenceDay);
   const maxDay = new Date(referenceMonth.getFullYear(), referenceMonth.getMonth() + 1, 0).getDate();
   const referenceDate = new Date(referenceMonth.getFullYear(), referenceMonth.getMonth(), parsedDay, 12);
@@ -1376,18 +1411,21 @@ function EntryModal({ visible, wallets, item, onClose, onSave, onDelete }: { vis
   useEffect(() => {
     if (!visible) return;
     const itemDate = item ? new Date(item.createdAt) : today;
-    setKind(item?.kind ?? "expense");
+    const itemKind = item?.kind ?? "expense";
+    const itemCategories = categoriesByKind[itemKind];
+    setKind(itemKind);
     setTitle(item?.title ?? "");
     setValue(item ? String(item.value).replace(".", ",") : "");
-    setCategory(item?.category ?? categories[0]!);
+    setCategory(item?.category && itemCategories.includes(item.category) ? item.category : itemCategories[0]!);
     setWalletId(item?.walletId ?? wallets[0]?.id ?? "");
     setReferenceMonth(new Date(itemDate.getFullYear(), itemDate.getMonth(), 1));
     setReferenceDay(String(itemDate.getDate()));
   }, [visible, item, wallets]);
+  const changeKind = (nextKind: EntryKind) => { setKind(nextKind); setCategory((current) => categoriesByKind[nextKind].includes(current) ? current : categoriesByKind[nextKind][0]!); };
   const save = () => { const parsed = Number(value.replace(",", ".")); if (title.trim() && parsed > 0 && walletId && validDate) { onSave({ title: title.trim(), value: parsed, kind, category, walletId, createdAt: referenceDate.toISOString() }); } };
   return <Sheet visible={visible} title={item ? "Editar movimentação" : "Novo lançamento"} subtitle={item ? "Corrija os dados sem criar outro lançamento." : "Conta pra gente por onde o dinheiro passeou."} onClose={onClose}>
-    <View style={styles.segment}><Pressable style={[styles.segmentItem, kind === "expense" && styles.segmentActive]} onPress={() => setKind("expense")}><Text style={[styles.segmentText, kind === "expense" && styles.segmentActiveText]}>Gasto</Text></Pressable><Pressable style={[styles.segmentItem, kind === "income" && styles.segmentActive]} onPress={() => setKind("income")}><Text style={[styles.segmentText, kind === "income" && styles.segmentActiveText]}>Entrada</Text></Pressable></View>
-    <Field label="O que foi?" value={title} onChange={setTitle} placeholder="Ex.: almoço, salário..." />
+    <View style={styles.segment}><Pressable style={[styles.segmentItem, kind === "expense" && styles.segmentActive]} onPress={() => changeKind("expense")}><Text style={[styles.segmentText, kind === "expense" && styles.segmentActiveText]}>Gasto</Text></Pressable><Pressable style={[styles.segmentItem, kind === "income" && styles.segmentActive]} onPress={() => changeKind("income")}><Text style={[styles.segmentText, kind === "income" && styles.segmentActiveText]}>Entrada</Text></Pressable></View>
+    <Field label={kind === "income" ? "De onde veio?" : "O que foi?"} value={title} onChange={setTitle} placeholder={kind === "income" ? "Ex.: pagamento de projeto" : "Ex.: almoço, mercado..."} />
     <Field label="Quanto?" value={value} onChange={setValue} placeholder="R$ 0,00" keyboardType="decimal-pad" />
     <Text style={styles.fieldLabel}>Data de referência</Text>
     <View style={styles.referenceDateRow}>
@@ -1399,7 +1437,7 @@ function EntryModal({ visible, wallets, item, onClose, onSave, onDelete }: { vis
       </View>
     </View>
     {!validDate && <Text style={styles.dateError}>{parsedDay > maxDay ? `Esse mês tem apenas ${maxDay} dias.` : referenceDate > todayEnd ? "Lançamentos futuros devem ser criados em Planejados." : "Informe um dia válido."}</Text>}
-    <Text style={styles.fieldLabel}>Categoria</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>{categories.map(c => <Pressable key={c} style={[styles.chip, category === c && styles.chipActive]} onPress={() => setCategory(c)}><Text style={[styles.chipText, category === c && styles.chipTextActive]}>{c}</Text></Pressable>)}</ScrollView>
+    <Text style={styles.fieldLabel}>{kind === "income" ? "Tipo de entrada" : "Categoria"}</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>{activeCategories.map(c => <CategoryChip key={c} category={c} kind={kind} selected={category === c} onPress={() => setCategory(c)} />)}</ScrollView>
     <Text style={styles.fieldLabel}>Carteira</Text><View style={styles.walletOptions}>{wallets.map(w => <Pressable key={w.id} style={[styles.walletOption, walletId === w.id && styles.walletOptionActive]} onPress={() => setWalletId(w.id)}><View style={[styles.colorDot, { backgroundColor: w.color }]} /><Text style={styles.walletOptionText}>{w.name}</Text>{walletId === w.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
     <PrimaryButton label={item ? "Salvar alterações" : "Salvar lançamento"} onPress={save} disabled={!title.trim() || !value || !validDate || !walletId} />
     {item && onDelete && <Pressable style={styles.deleteEntryButton} onPress={onDelete}><Feather name="trash-2" size={17} color="#B54337" /><Text style={styles.deleteEntryButtonText}>Excluir {item.kind === "income" ? "entrada" : "gasto"}</Text></Pressable>}
@@ -1420,34 +1458,36 @@ function WalletModal({ visible, item, onClose, onSave, onDelete }: { visible: bo
 
 function RecurringModal({ visible, wallets, item, onClose, onSave }: { visible: boolean; wallets: Wallet[]; item: Recurring | null; onClose: () => void; onSave: (item: Omit<Recurring, "id" | "active">) => void }) {
   const [kind, setKind] = useState<EntryKind>("expense"); const [title, setTitle] = useState(""); const [value, setValue] = useState(""); const [day, setDay] = useState(""); const [category, setCategory] = useState("Casa"); const [walletId, setWalletId] = useState(wallets[0]?.id ?? "");
+  const activeCategories = categoriesByKind[kind];
   useEffect(() => {
     if (!visible) return;
-    setKind(item?.kind ?? "expense");
+    const itemKind = item?.kind ?? "expense";
+    const itemCategories = categoriesByKind[itemKind];
+    setKind(itemKind);
     setTitle(item?.title ?? "");
     setValue(item ? String(item.value).replace(".", ",") : "");
     setDay(item ? String(item.day) : "");
-    setCategory(item?.category ?? "Casa");
+    setCategory(item?.category && itemCategories.includes(item.category) ? item.category : itemCategories[0]!);
     setWalletId(item?.walletId ?? wallets[0]?.id ?? "");
   }, [visible, item, wallets]);
+  const changeKind = (nextKind: EntryKind) => { setKind(nextKind); setCategory((current) => categoriesByKind[nextKind].includes(current) ? current : categoriesByKind[nextKind][0]!); };
   const save = () => {
     const parsed = Number(value.replace(",", ".")); const parsedDay = Number(day);
     if (title.trim() && parsed > 0 && parsedDay >= 1 && parsedDay <= 31 && walletId) {
-      onSave({ title: title.trim(), value: parsed, day: parsedDay, category: kind === "income" ? "Salário" : category, kind, walletId });
+      onSave({ title: title.trim(), value: parsed, day: parsedDay, category, kind, walletId });
       setTitle(""); setValue(""); setDay("");
     }
   };
   return <Sheet visible={visible} title={item ? "Editar planejamento" : "Planejar o mês"} subtitle={item ? "Ajuste os próximos meses sem perder o histórico." : "Entradas e gastos no dia certo, sem depender da memória."} onClose={onClose}>
     <View style={styles.segment}>
-      <Pressable style={[styles.segmentItem, kind === "expense" && styles.segmentActive]} onPress={() => setKind("expense")}><Text style={[styles.segmentText, kind === "expense" && styles.segmentActiveText]}>Gasto fixo</Text></Pressable>
-      <Pressable style={[styles.segmentItem, kind === "income" && styles.segmentActive]} onPress={() => setKind("income")}><Text style={[styles.segmentText, kind === "income" && styles.segmentActiveText]}>Salário / entrada</Text></Pressable>
+      <Pressable style={[styles.segmentItem, kind === "expense" && styles.segmentActive]} onPress={() => changeKind("expense")}><Text style={[styles.segmentText, kind === "expense" && styles.segmentActiveText]}>Gasto fixo</Text></Pressable>
+      <Pressable style={[styles.segmentItem, kind === "income" && styles.segmentActive]} onPress={() => changeKind("income")}><Text style={[styles.segmentText, kind === "income" && styles.segmentActiveText]}>Salário / entrada</Text></Pressable>
     </View>
     <Field label={kind === "income" ? "Qual entrada?" : "Qual gasto?"} value={title} onChange={setTitle} placeholder={kind === "income" ? "Ex.: salário" : "Ex.: aluguel, internet..."} />
     <Field label="Valor" value={value} onChange={setValue} placeholder="R$ 0,00" keyboardType="decimal-pad" />
     <Field label={kind === "income" ? "Depositar em qual dia?" : "Vence em qual dia?"} value={day} onChange={setDay} placeholder="Ex.: 10" keyboardType="number-pad" />
-    {kind === "expense" && <>
-      <Text style={styles.fieldLabel}>Categoria</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>{categories.map(c => <Pressable key={c} style={[styles.chip, category === c && styles.chipActive]} onPress={() => setCategory(c)}><Text style={[styles.chipText, category === c && styles.chipTextActive]}>{c}</Text></Pressable>)}</ScrollView>
-    </>}
+    <Text style={styles.fieldLabel}>{kind === "income" ? "Tipo de entrada" : "Categoria"}</Text>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>{activeCategories.map(c => <CategoryChip key={c} category={c} kind={kind} selected={category === c} onPress={() => setCategory(c)} />)}</ScrollView>
       <Text style={styles.fieldLabel}>{kind === "income" ? "Carteira que recebe" : "Carteira usada no pagamento"}</Text>
       <View style={styles.walletOptions}>{wallets.map(wallet => <Pressable key={wallet.id} style={[styles.walletOption, walletId === wallet.id && styles.walletOptionActive]} onPress={() => setWalletId(wallet.id)}><View style={[styles.colorDot, { backgroundColor: wallet.color }]} /><Text style={styles.walletOptionText}>{wallet.name}</Text>{walletId === wallet.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
       {kind === "income" && <View style={styles.autoPostNote}><Feather name="zap" size={16} color="#66851D" /><Text style={styles.autoPostText}>O valor será contabilizado na data programada, mesmo que o Nenero fique fechado naquele dia.</Text></View>}
@@ -1721,6 +1761,7 @@ function BankImportModal({ visible, wallets, existingEntries, onClose, onImport 
   const [walletId, setWalletId] = useState("");
   const [reading, setReading] = useState(false);
   const [error, setError] = useState("");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   useEffect(() => {
     if (!visible) return;
     setDrafts([]);
@@ -1728,6 +1769,7 @@ function BankImportModal({ visible, wallets, existingEntries, onClose, onImport 
     setWalletId(wallets[0]?.id ?? "");
     setReading(false);
     setError("");
+    setExpandedId(null);
   }, [visible]);
   const loadFile = async (file: File) => {
     if (file.size > 8 * 1024 * 1024) throw new Error("Esse CSV passou de 8 MB. Exporte um período menor e tente novamente.");
@@ -1757,6 +1799,10 @@ function BankImportModal({ visible, wallets, existingEntries, onClose, onImport 
     input.click();
   };
   const updateDraft = (importId: string, changes: Partial<BankImportDraft>) => setDrafts((current) => current.map((draft) => draft.importId === importId ? { ...draft, ...changes } : draft));
+  const changeDraftKind = (draft: BankImportDraft, kind: EntryKind) => {
+    const nextCategories = categoriesByKind[kind];
+    updateDraft(draft.importId, { kind, category: nextCategories.includes(draft.category) ? draft.category : nextCategories[0]! });
+  };
   const selected = drafts.filter((draft) => draft.selected && !draft.duplicate);
   const income = selected.filter((draft) => draft.kind === "income").reduce((sum, draft) => sum + draft.value, 0);
   const expenses = selected.filter((draft) => draft.kind === "expense").reduce((sum, draft) => sum + draft.value, 0);
@@ -1783,10 +1829,15 @@ function BankImportModal({ visible, wallets, existingEntries, onClose, onImport 
       <View style={styles.bankImportTotals}><View style={styles.bankImportTotalBlock}><Text style={styles.bankImportTotalLabel}>SELECIONADAS</Text><Text style={styles.bankImportTotalValue}>{selected.length}</Text></View><View style={styles.bankImportTotalBlock}><Text style={styles.bankImportTotalLabel}>ENTRADAS</Text><Text style={styles.bankImportTotalMoney}>+ {money(income)}</Text></View><View style={styles.bankImportTotalBlock}><Text style={styles.bankImportTotalLabel}>GASTOS</Text><Text style={styles.bankImportTotalMoney}>− {money(expenses)}</Text></View></View>
       {(drafts.some((draft) => draft.transferLike) || drafts.some((draft) => draft.duplicate) || fileInfo.ignoredRows > 0) && <View style={styles.bankReviewNotice}><MaterialCommunityIcons name="text-box-search-outline" size={19} color="#9A6810" /><Text style={styles.bankReviewNoticeText}>Linhas suspeitas, repetidas ou inválidas foram separadas. Revise antes de importar.</Text></View>}
       <View style={styles.bankReviewHeader}><Text style={styles.bankReviewTitle}>O que entra no Nenero?</Text><Pressable onPress={() => setDrafts((current) => current.map((draft) => ({ ...draft, selected: false })))}><Text style={styles.bankReviewActionText}>Limpar</Text></Pressable></View>
-      <View style={styles.bankDraftList}>{drafts.map((draft) => <View key={draft.importId} style={[styles.bankDraftCard, !draft.selected && styles.bankDraftCardMuted, draft.duplicate && styles.bankDraftCardDuplicate]}>
-        <View style={styles.bankDraftTop}><Pressable style={[styles.bankDraftCheck, draft.selected && styles.bankDraftCheckActive]} onPress={() => !draft.duplicate && updateDraft(draft.importId, { selected: !draft.selected })} disabled={draft.duplicate}>{draft.selected && <Feather name="check" size={14} color="#FFFFFF" />}</Pressable><View style={styles.flex}><TextInput style={styles.bankDraftTitleInput} value={draft.title} onChangeText={(title) => updateDraft(draft.importId, { title })} editable={!draft.duplicate} /><Text style={styles.bankDraftOriginal} numberOfLines={2}>{draft.originalDescription}</Text></View><View style={styles.bankDraftValueBlock}><Text style={styles.bankDraftValue}>{draft.kind === "income" ? "+" : "−"} {money(draft.value)}</Text><Text style={styles.bankDraftDate}>{new Date(draft.createdAt).toLocaleDateString("pt-BR")}</Text></View></View>
-        <View style={styles.bankDraftMeta}><Text style={styles.bankDraftCategoryText}>{draft.category}</Text>{draft.transferLike && <Text style={styles.bankDraftReviewText}>REVISAR</Text>}{draft.duplicate && <Text style={styles.bankDraftDuplicateText}>JÁ IMPORTADA</Text>}</View>
-      </View>)}</View>
+      <View style={styles.bankDraftList}>{drafts.map((draft) => {
+        const visual = getCategoryVisual(draft.category, draft.kind);
+        const expanded = expandedId === draft.importId;
+        return <View key={draft.importId} style={[styles.bankDraftCard, !draft.selected && styles.bankDraftCardMuted, draft.duplicate && styles.bankDraftCardDuplicate]}>
+          <View style={styles.bankDraftTop}><Pressable style={[styles.bankDraftCheck, draft.selected && styles.bankDraftCheckActive]} onPress={() => !draft.duplicate && updateDraft(draft.importId, { selected: !draft.selected })} disabled={draft.duplicate}>{draft.selected && <Feather name="check" size={14} color="#FFFFFF" />}</Pressable><View style={styles.flex}><TextInput style={styles.bankDraftTitleInput} value={draft.title} onChangeText={(title) => updateDraft(draft.importId, { title })} editable={!draft.duplicate} /><Text style={styles.bankDraftOriginal} numberOfLines={2}>{draft.originalDescription}</Text></View><View style={styles.bankDraftValueBlock}><Text style={[styles.bankDraftValue, draft.kind === "income" && styles.income]}>{draft.kind === "income" ? "+" : "−"} {money(draft.value)}</Text><Text style={styles.bankDraftDate}>{new Date(draft.createdAt).toLocaleDateString("pt-BR")}</Text></View></View>
+          <View style={styles.bankDraftMeta}><View style={[styles.bankDraftCategory, { backgroundColor: visual.background }]}><MaterialCommunityIcons name={visual.icon} size={13} color={visual.color} /><Text style={[styles.bankDraftCategoryText, { color: visual.color }]}>{draft.category}</Text></View>{draft.transferLike && <Text style={styles.bankDraftReviewText}>REVISAR</Text>}{draft.duplicate && <Text style={styles.bankDraftDuplicateText}>JÁ IMPORTADA</Text>}<Pressable style={styles.bankDraftEdit} onPress={() => setExpandedId(expanded ? null : draft.importId)}><Feather name={expanded ? "chevron-up" : "edit-2"} size={14} color={COLORS.grape} /><Text style={styles.bankDraftEditText}>{expanded ? "Fechar" : "Editar"}</Text></Pressable></View>
+          {expanded && <View style={styles.bankDraftEditor}><Text style={styles.fieldLabel}>Tipo</Text><View style={styles.segment}><Pressable style={[styles.segmentItem, draft.kind === "expense" && styles.segmentActive]} onPress={() => changeDraftKind(draft, "expense")}><Text style={[styles.segmentText, draft.kind === "expense" && styles.segmentActiveText]}>Gasto</Text></Pressable><Pressable style={[styles.segmentItem, draft.kind === "income" && styles.segmentActive]} onPress={() => changeDraftKind(draft, "income")}><Text style={[styles.segmentText, draft.kind === "income" && styles.segmentActiveText]}>Entrada</Text></Pressable></View><Text style={styles.fieldLabel}>Categoria</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>{categoriesByKind[draft.kind].map((category) => <CategoryChip key={category} category={category} kind={draft.kind} selected={draft.category === category} onPress={() => updateDraft(draft.importId, { category })} />)}</ScrollView></View>}
+        </View>;
+      })}</View>
       {invalid && <Text style={styles.bankImportValidation}>Toda movimentação selecionada precisa ter um nome.</Text>}
       <PrimaryButton label={`Importar ${selected.length} movimentações`} onPress={submit} disabled={!walletId || !selected.length || invalid} />
     </>}
@@ -2256,10 +2307,14 @@ const createStyleDefinition = () => ({
   listCard: { backgroundColor: COLORS.white, borderRadius: 20, paddingHorizontal: 15, borderWidth: 1, borderColor: COLORS.line },
   entryRow: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 12 },
   entryBorder: { borderBottomWidth: 1, borderBottomColor: COLORS.line },
-  entryIcon: { width: 40, height: 40, borderRadius: 13, alignItems: "center", justifyContent: "center" },
+  entryIcon: { width: 42, height: 42, borderRadius: 14, borderWidth: 1, alignItems: "center", justifyContent: "center" },
   flex: { flex: 1 },
   rowTitle: { color: COLORS.ink, fontSize: 13, fontWeight: "800" },
   rowMeta: { color: COLORS.muted, fontSize: 10, marginTop: 4 },
+  entryMetaLine: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 5 },
+  entryCategoryBadge: { minHeight: 20, borderRadius: 9, paddingHorizontal: 7, alignItems: "center", justifyContent: "center" },
+  entryCategoryBadgeText: { fontSize: 8, lineHeight: 11, fontWeight: "900", letterSpacing: 0.25 },
+  entryDateText: { color: COLORS.muted, fontSize: 9, fontWeight: "700", textTransform: "lowercase" },
   entryWallet: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 5 },
   entryWalletDot: { width: 6, height: 6, borderRadius: 3 },
   entryWalletText: { color: COLORS.muted, fontSize: 9, fontWeight: "700" },
@@ -2466,10 +2521,10 @@ const createStyleDefinition = () => ({
   segmentText: { color: COLORS.muted, fontSize: 12, fontWeight: "800" },
   segmentActiveText: { color: COLORS.grape },
   chips: { gap: 8, paddingBottom: 18 },
-  chip: { borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.white, paddingHorizontal: 13, paddingVertical: 9, borderRadius: 20 },
+  chip: { borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.white, paddingHorizontal: 13, paddingVertical: 9, borderRadius: 20, flexDirection: "row", alignItems: "center", gap: 6 },
   chipActive: { backgroundColor: "#EDE6FF", borderColor: "#BBA7F4" },
   chipText: { color: COLORS.muted, fontSize: 11, fontWeight: "700" },
-  chipTextActive: { color: COLORS.grapeDark },
+  chipTextActive: { color: COLORS.white },
   walletOptions: { gap: 8, marginBottom: 5 },
   walletOption: { minHeight: 48, borderRadius: 14, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.line, flexDirection: "row", alignItems: "center", paddingHorizontal: 13, gap: 10 },
   walletOptionActive: { borderColor: "#B9A6EE", backgroundColor: "#F3EFFF" },
@@ -2519,9 +2574,13 @@ const createStyleDefinition = () => ({
   bankDraftValue: { color: COLORS.ink, fontSize: 10, fontWeight: "900" },
   bankDraftDate: { color: COLORS.muted, fontSize: 8, fontWeight: "700", marginTop: 4 },
   bankDraftMeta: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 11 },
-  bankDraftCategoryText: { color: COLORS.grape, fontSize: 8, fontWeight: "900" },
+  bankDraftCategory: { minHeight: 25, borderRadius: 11, paddingHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 5 },
+  bankDraftCategoryText: { fontSize: 8, fontWeight: "900" },
   bankDraftReviewText: { color: "#9A6810", fontSize: 7, fontWeight: "900", letterSpacing: 0.5 },
   bankDraftDuplicateText: { color: COLORS.muted, fontSize: 7, fontWeight: "900", letterSpacing: 0.4 },
+  bankDraftEdit: { minHeight: 25, marginLeft: "auto", paddingHorizontal: 8, borderRadius: 10, backgroundColor: "#F0EBFF", flexDirection: "row", alignItems: "center", gap: 4 },
+  bankDraftEditText: { color: COLORS.grape, fontSize: 8, fontWeight: "900" },
+  bankDraftEditor: { borderTopWidth: 1, borderTopColor: COLORS.line, marginTop: 13, paddingTop: 14 },
   bankImportValidation: { color: "#B54337", fontSize: 10, fontWeight: "700", marginBottom: 12 },
   autoPostNote: { flexDirection: "row", alignItems: "center", gap: 9, backgroundColor: "#F0F9D9", borderRadius: 14, padding: 12, marginTop: 10 },
   autoPostText: { flex: 1, color: "#58721B", fontSize: 10, lineHeight: 14, fontWeight: "700" },
