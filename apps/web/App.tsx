@@ -812,6 +812,7 @@ Antes de responder, confira silenciosamente:
             <Home
               userName={userName}
               balance={totalBalance}
+              savedAmount={dreamsBalance}
               recurringTotal={recurringTotal}
               monthlyIncome={monthlyIncome}
               monthlyExpenses={monthlyExpenses}
@@ -1026,9 +1027,9 @@ Antes de responder, confira silenciosamente:
   );
 }
 
-function Home({ userName, balance, recurringTotal, monthlyIncome, monthlyExpenses, entries, wallets, analysis, analyzing, hasGoal, onAnalyze, onAdd, onEditEntry }: {
+function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, monthlyExpenses, entries, wallets, analysis, analyzing, hasGoal, onAnalyze, onAdd, onEditEntry }: {
   userName: string;
-  balance: number; recurringTotal: number; monthlyIncome: number; monthlyExpenses: number; entries: Entry[]; wallets: Wallet[];
+  balance: number; savedAmount: number; recurringTotal: number; monthlyIncome: number; monthlyExpenses: number; entries: Entry[]; wallets: Wallet[];
   analysis: AiAnalysis | null; analyzing: boolean; hasGoal: boolean; onAnalyze: () => void;
   onAdd: () => void; onEditEntry: (entry: Entry) => void;
 }) {
@@ -1055,6 +1056,7 @@ function Home({ userName, balance, recurringTotal, monthlyIncome, monthlyExpense
           <Text style={styles.balanceLabel}>Seu dinheiro todo</Text>
         </View>
         <Text style={styles.balanceValue}>{money(balance)}</Text>
+        <View style={styles.savedTotalLine}><MaterialCommunityIcons name="piggy-bank-outline" size={16} color={COLORS.lime} /><Text style={styles.savedTotalLabel}>Poupado:</Text><Text style={styles.savedTotalValue}>{money(savedAmount)}</Text></View>
         <Text style={styles.balanceCopy}>{balance >= 0 ? "Tá bonito. E o melhor: tá organizado." : "Respira. Vamos ajeitar isso juntos."}</Text>
         <Pressable style={styles.whiteButton} onPress={onAdd}>
           <Feather name="plus" size={18} color="#532CB8" />
@@ -2273,6 +2275,9 @@ const createStyleDefinition = () => ({
   balanceAiBadge: { minHeight: 25, borderRadius: 13, paddingHorizontal: 9, flexDirection: "row", alignItems: "center", gap: 5 },
   balanceAiBadgeText: { color: "#242033", fontSize: 8, fontWeight: "900", letterSpacing: 0.5 },
   balanceValue: { color: "white", fontSize: 39, fontWeight: "900", letterSpacing: -1.8, marginTop: 7 },
+  savedTotalLine: { alignSelf: "flex-start", minHeight: 30, borderRadius: 13, paddingHorizontal: 10, marginTop: 9, backgroundColor: "rgba(20,13,45,0.28)", flexDirection: "row", alignItems: "center", gap: 6 },
+  savedTotalLabel: { color: "rgba(255,255,255,0.76)", fontSize: 10, fontWeight: "700" },
+  savedTotalValue: { color: "#FFFFFF", fontSize: 11, fontWeight: "900" },
   balanceCopy: { color: "rgba(255,255,255,0.86)", fontSize: 13, marginTop: 7, marginBottom: 23 },
   balanceAnalysis: { marginTop: 7, marginBottom: 18 },
   balanceAnalysisHeadline: { color: "#FFFFFF", fontSize: 14, fontWeight: "900" },
