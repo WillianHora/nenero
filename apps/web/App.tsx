@@ -22,7 +22,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { parseBankCsv, type ParsedBankTransaction } from "./bankCsv";
 import { supabase, supabaseConfigured } from "./lib/supabase";
 
-type Tab = "inicio" | "movimentos" | "recorrentes" | "cofrinhos" | "carteiras";
+type Tab = "inicio" | "movimentos" | "recorrentes" | "cofrinhos" | "carteiras" | "ferramentas";
 type EntryKind = "expense" | "income";
 type Entry = {
   id: string;
@@ -821,10 +821,8 @@ Antes de responder, confira silenciosamente:
               analyzing={analyzing}
               hasGoal={Boolean(goal.trim())}
               onAnalyze={() => analysis || analysisError ? setModal("analysis") : runAnalysis(false)}
-              onRefresh={() => runAnalysis(false)}
               onAdd={() => { setEditingEntry(null); setModal("entry"); }}
               onEditEntry={(entry) => { setEditingEntry(entry); setModal("entry"); }}
-              onLifeCalculator={() => setModal("lifeCalculator")}
             />
           )}
           {tab === "movimentos" && <Movements entries={sortedEntries} wallets={wallets} onAdd={() => { setEditingEntry(null); setModal("entry"); }} onEdit={(entry) => { setEditingEntry(entry); setModal("entry"); }} />}
@@ -866,6 +864,7 @@ Antes de responder, confira silenciosamente:
             />
           )}
           {tab === "carteiras" && <WalletList walletBalances={walletBalances} pots={savingsPots} dreamsBalance={dreamsBalance} onAdd={() => { setEditingWallet(null); setModal("wallet"); }} onEdit={(wallet) => { setEditingWallet(wallet); setModal("wallet"); }} onOpenDreams={() => setTab("cofrinhos")} />}
+          {tab === "ferramentas" && <Tools onLifeCalculator={() => setModal("lifeCalculator")} />}
         </ScrollView>
 
         <BottomNav tab={tab} setTab={setTab} />
@@ -1027,11 +1026,11 @@ Antes de responder, confira silenciosamente:
   );
 }
 
-function Home({ userName, balance, recurringTotal, monthlyIncome, monthlyExpenses, entries, wallets, analysis, analyzing, hasGoal, onAnalyze, onRefresh, onAdd, onEditEntry, onLifeCalculator }: {
+function Home({ userName, balance, recurringTotal, monthlyIncome, monthlyExpenses, entries, wallets, analysis, analyzing, hasGoal, onAnalyze, onAdd, onEditEntry }: {
   userName: string;
   balance: number; recurringTotal: number; monthlyIncome: number; monthlyExpenses: number; entries: Entry[]; wallets: Wallet[];
-  analysis: AiAnalysis | null; analyzing: boolean; hasGoal: boolean; onAnalyze: () => void; onRefresh: () => void;
-  onAdd: () => void; onEditEntry: (entry: Entry) => void; onLifeCalculator: () => void;
+  analysis: AiAnalysis | null; analyzing: boolean; hasGoal: boolean; onAnalyze: () => void;
+  onAdd: () => void; onEditEntry: (entry: Entry) => void;
 }) {
   const darkTheme = COLORS.paper === DARK_COLORS.paper;
   const today = new Date().toLocaleDateString("pt-BR", {
@@ -1044,48 +1043,19 @@ function Home({ userName, balance, recurringTotal, monthlyIncome, monthlyExpense
     : analysis?.status === "attention"
       ? darkTheme ? ["#51327B", "#2D1E58"] : ["#8550C8", "#5B32C8"]
       : darkTheme ? ["#4B2E86", "#27194F"] : ["#7951ED", "#5B32C8"];
-  const aiStatusLabel = analysis?.status === "danger"
-    ? "PERIGO"
-    : analysis?.status === "attention"
-      ? "ATENÇÃO"
-      : analysis?.status === "ok"
-        ? "TUDO SOB CONTROLE"
-        : null;
-  const aiStatusColor = analysis?.status === "danger"
-    ? "#FFD3CC"
-    : analysis?.status === "attention"
-      ? "#FFE49A"
-      : COLORS.lime;
   return (
     <>
       <View style={styles.helloRow}>
-        <View><Text style={styles.eyebrow}>{today}</Text><Text style={styles.h1}>Oi, {userName}!</Text></View>
-        <View style={styles.moodActions}>
-          <Pressable style={[styles.moodPill, analysis?.status === "attention" && styles.moodAttention, analysis?.status === "danger" && styles.moodDanger]} onPress={onAnalyze}>
-            <Text style={[styles.moodText, analysis?.status === "attention" && styles.moodAttentionText, analysis?.status === "danger" && styles.moodDangerText]}>{analyzing ? "pensando..." : analysis?.status === "danger" ? "perigo, deu ruim" : analysis?.status === "attention" ? "atenção por aqui" : analysis?.status === "ok" ? "tudo sob controle" : hasGoal ? "analisar meu mês" : "defina seu objetivo"}</Text>
-            <MaterialCommunityIcons name="creation" size={15} color={analysis?.status === "danger" ? "#B54337" : analysis?.status === "attention" ? "#9A6810" : "#277493"} />
-          </Pressable>
-          <Pressable style={[styles.aiRefreshButton, analyzing && styles.buttonDisabled]} onPress={onRefresh} disabled={analyzing} accessibilityLabel="Analisar novamente">
-            <Feather name="refresh-cw" size={14} color={COLORS.grape} />
-          </Pressable>
-        </View>
+        <View style={styles.flex}><Text style={styles.eyebrow}>{today}</Text><Text style={styles.h1} numberOfLines={2}>Oi, {userName}!</Text></View>
       </View>
 
       <LinearGradient colors={balanceGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.balanceCard}>
         <View style={styles.balanceGlow} />
         <View style={styles.balanceHeader}>
           <Text style={styles.balanceLabel}>Seu dinheiro todo</Text>
-          {aiStatusLabel && <View style={[styles.balanceAiBadge, { backgroundColor: aiStatusColor }]}><MaterialCommunityIcons name="creation" size={12} color="#242033" /><Text style={styles.balanceAiBadgeText}>{aiStatusLabel}</Text></View>}
         </View>
         <Text style={styles.balanceValue}>{money(balance)}</Text>
-        {analysis ? (
-          <View style={styles.balanceAnalysis}>
-            <Text style={styles.balanceAnalysisHeadline}>{analysis.headline}</Text>
-            <Text style={styles.balanceAnalysisSummary} numberOfLines={2}>{analysis.summary}</Text>
-          </View>
-        ) : (
-          <Text style={styles.balanceCopy}>{balance >= 0 ? "Tá bonito. E o melhor: tá organizado." : "Respira. Vamos ajeitar isso juntos."}</Text>
-        )}
+        <Text style={styles.balanceCopy}>{balance >= 0 ? "Tá bonito. E o melhor: tá organizado." : "Respira. Vamos ajeitar isso juntos."}</Text>
         <Pressable style={styles.whiteButton} onPress={onAdd}>
           <Feather name="plus" size={18} color="#532CB8" />
           <Text style={styles.whiteButtonText}>Novo lançamento</Text>
@@ -1109,12 +1079,7 @@ function Home({ userName, balance, recurringTotal, monthlyIncome, monthlyExpense
         <View style={styles.flex}><Text style={styles.metricLabel}>Já comprometido em gastos fixos</Text><Text style={styles.commitmentHint}>Contas ativas deste mês</Text></View>
         <Text style={styles.metricValue}>{money(recurringTotal)}</Text>
       </View>
-
-      <Pressable style={({ pressed }) => [styles.lifeFeatureCard, pressed && styles.pressed]} onPress={onLifeCalculator}>
-        <View style={styles.lifeFeatureIcon}><Feather name="clock" size={22} color={COLORS.grape} /></View>
-        <View style={styles.flex}><Text style={styles.lifeFeatureEyebrow}>CALCULADORA DE VIDA GASTA</Text><Text style={styles.lifeFeatureTitle}>Quanto trabalho custa essa compra?</Text></View>
-        <Feather name="chevron-right" size={20} color={COLORS.grape} />
-      </Pressable>
+      <AiInsightCard analysis={analysis} analyzing={analyzing} hasGoal={hasGoal} onPress={onAnalyze} />
 
       <SectionTitle title="Últimos rolês do dinheiro" action="Ver todos" />
       <View style={styles.listCard}>
@@ -1127,6 +1092,37 @@ function Home({ userName, balance, recurringTotal, monthlyIncome, monthlyExpense
       </View>
     </>
   );
+}
+
+function AiInsightCard({ analysis, analyzing, hasGoal, onPress }: { analysis: AiAnalysis | null; analyzing: boolean; hasGoal: boolean; onPress: () => void }) {
+  const tone = analysis?.status ?? "idle";
+  const statusLabel = analysis?.status === "danger" ? "PRECISA DE ATENÇÃO" : analysis?.status === "attention" ? "FIQUE DE OLHO" : analysis?.status === "ok" ? "MÊS NO EIXO" : "LEITURA DO MÊS";
+  const title = analyzing ? "Lendo seus movimentos..." : analysis?.headline ?? (hasGoal ? "O que seus números estão dizendo?" : "Primeiro, conte onde quer chegar");
+  const copy = analysis?.summary ?? (hasGoal ? "O Nenero cruza entradas, gastos fixos e seu objetivo para mostrar o que merece atenção." : "Defina um objetivo financeiro no perfil para receber uma análise conectada aos seus planos.");
+  return <Pressable style={({ pressed }) => [styles.aiInsightCard, tone === "attention" && styles.aiInsightAttention, tone === "danger" && styles.aiInsightDanger, pressed && styles.pressed]} onPress={onPress} disabled={analyzing} accessibilityRole="button" accessibilityLabel={analysis ? "Abrir análise do mês" : "Analisar mês com inteligência artificial"}>
+    <View style={styles.aiInsightHeader}><View style={[styles.aiInsightIcon, tone === "attention" && styles.aiInsightIconAttention, tone === "danger" && styles.aiInsightIconDanger]}>{analyzing ? <ActivityIndicator size="small" color="#FFFFFF" /> : <MaterialCommunityIcons name="creation" size={21} color="#FFFFFF" />}</View><Text style={styles.aiInsightEyebrow}>{statusLabel}</Text><View style={styles.aiInsightAction}><Text style={styles.aiInsightActionText}>{analysis ? "Abrir" : hasGoal ? "Analisar" : "Configurar"}</Text><Feather name="arrow-up-right" size={14} color={COLORS.grape} /></View></View>
+    <Text style={styles.aiInsightTitle}>{title}</Text>
+    <Text style={styles.aiInsightText} numberOfLines={3}>{copy}</Text>
+  </Pressable>;
+}
+
+function Tools({ onLifeCalculator }: { onLifeCalculator: () => void }) {
+  return <>
+    <PageHeader eyebrow="DECISÕES COM MAIS CONTEXTO" title="Ferramentas" button="" onPress={() => {}} hideButton />
+    <Text style={styles.toolsIntro}>Calculadoras para transformar preço, tempo e metas em escolhas mais claras.</Text>
+    <Pressable style={({ pressed }) => [styles.toolFeaturedCard, pressed && styles.pressed]} onPress={onLifeCalculator}>
+      <View style={styles.toolFeaturedTop}><View style={styles.toolFeaturedIcon}><Feather name="clock" size={25} color="#FFFFFF" /></View><View style={styles.toolAvailableBadge}><Text style={styles.toolAvailableText}>DISPONÍVEL</Text></View></View>
+      <Text style={styles.toolFeaturedEyebrow}>CALCULADORA DE VIDA GASTA</Text>
+      <Text style={styles.toolFeaturedTitle}>Quanto trabalho custa essa compra?</Text>
+      <Text style={styles.toolFeaturedText}>Converta o preço em horas e dias da sua vida profissional antes de decidir.</Text>
+      <View style={styles.toolOpenLine}><Text style={styles.toolOpenText}>Abrir calculadora</Text><Feather name="arrow-right" size={17} color={COLORS.lime} /></View>
+    </Pressable>
+    <Text style={styles.toolsComingTitle}>Em preparação</Text>
+    <View style={styles.toolsComingGrid}>
+      <View style={styles.toolComingCard}><View style={styles.toolComingIcon}><MaterialCommunityIcons name="target" size={21} color={COLORS.grape} /></View><Text style={styles.toolComingName}>Plano de metas</Text><Text style={styles.toolComingText}>Descubra quanto guardar por mês.</Text><Text style={styles.toolComingBadge}>EM BREVE</Text></View>
+      <View style={styles.toolComingCard}><View style={styles.toolComingIcon}><MaterialCommunityIcons name="scale-balance" size={21} color={COLORS.grape} /></View><Text style={styles.toolComingName}>Comprar ou esperar</Text><Text style={styles.toolComingText}>Compare impacto e prioridade.</Text><Text style={styles.toolComingBadge}>EM BREVE</Text></View>
+    </View>
+  </>;
 }
 
 function Movements({ entries, wallets, onAdd, onEdit }: { entries: Entry[]; wallets: Wallet[]; onAdd: () => void; onEdit: (entry: Entry) => void }) {
@@ -1342,8 +1338,8 @@ function SavingsPotList({ pots, wallets, onAdd, onDeposit, onDelete }: { pots: S
   );
 }
 
-function PageHeader({ eyebrow, title, button, onPress }: { eyebrow: string; title: string; button: string; onPress: () => void }) {
-  return <View style={styles.pageHeader}><View><Text style={styles.eyebrow}>{eyebrow}</Text><Text style={styles.h1}>{title}</Text></View><Pressable style={styles.smallButton} onPress={onPress}><Feather name="plus" size={16} color="white" /><Text style={styles.smallButtonText}>{button}</Text></Pressable></View>;
+function PageHeader({ eyebrow, title, button, onPress, hideButton = false }: { eyebrow: string; title: string; button: string; onPress: () => void; hideButton?: boolean }) {
+  return <View style={styles.pageHeader}><View><Text style={styles.eyebrow}>{eyebrow}</Text><Text style={styles.h1}>{title}</Text></View>{!hideButton && <Pressable style={styles.smallButton} onPress={onPress}><Feather name="plus" size={16} color="white" /><Text style={styles.smallButtonText}>{button}</Text></Pressable>}</View>;
 }
 
 function EntryRow({ entry, wallet, last, onEdit }: { entry: Entry; wallet?: Wallet; last: boolean; onEdit?: () => void }) {
@@ -1370,7 +1366,7 @@ function BottomNav({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
   const tabs: { key: Tab; label: string; icon: keyof typeof Feather.glyphMap }[] = [
     { key: "inicio", label: "Início", icon: "home" }, { key: "movimentos", label: "Movimentos", icon: "list" },
     { key: "recorrentes", label: "Planejados", icon: "repeat" }, { key: "cofrinhos", label: "Cofrinhos", icon: "target" },
-    { key: "carteiras", label: "Carteiras", icon: "credit-card" },
+    { key: "carteiras", label: "Carteiras", icon: "credit-card" }, { key: "ferramentas", label: "Ferramentas", icon: "tool" },
   ];
   return <View style={styles.nav}>{tabs.map((item) => <Pressable key={item.key} style={styles.navItem} onPress={() => setTab(item.key)}><Feather name={item.icon} size={21} color={tab === item.key ? COLORS.grape : "#AAA4B3"} /><Text style={[styles.navLabel, tab === item.key && styles.navActive]}>{item.label}</Text>{tab === item.key && <View style={styles.navDot} />}</Pressable>)}</View>;
 }
@@ -2259,7 +2255,7 @@ const createStyleDefinition = () => ({
   avatar: { width: 35, height: 35, borderRadius: 14, backgroundColor: COLORS.lime, alignItems: "center", justifyContent: "center" },
   avatarText: { color: COLORS.ink, fontWeight: "900", fontSize: 12 },
   content: { padding: 20, paddingTop: 12, paddingBottom: 120 },
-  helloRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 20 },
+  helloRow: { marginBottom: 20 },
   eyebrow: { color: COLORS.muted, fontSize: 10, fontWeight: "800", letterSpacing: 1.4, marginBottom: 5 },
   h1: { color: COLORS.ink, fontSize: 30, lineHeight: 35, fontWeight: "900", letterSpacing: -1.2 },
   moodPill: { maxWidth: 145, minHeight: 32, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: COLORS.sky, paddingVertical: 7, paddingHorizontal: 11, borderRadius: 20, marginBottom: 3 },
@@ -2296,6 +2292,18 @@ const createStyleDefinition = () => ({
   metricValue: { color: COLORS.ink, fontSize: 17, fontWeight: "900", marginTop: 4, letterSpacing: -0.5 },
   commitmentCard: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#F0F9D9", borderRadius: 18, padding: 14, marginTop: 12 },
   commitmentHint: { color: "#71804A", fontSize: 9, marginTop: 3 },
+  aiInsightCard: { minHeight: 154, borderRadius: 22, padding: 17, marginTop: 14, backgroundColor: "#F0EBFF", borderWidth: 1, borderColor: "#D9CDF8" },
+  aiInsightAttention: { backgroundColor: "#FFF5D9", borderColor: "#EED9A3" },
+  aiInsightDanger: { backgroundColor: "#FFF0ED", borderColor: "#F1C9C3" },
+  aiInsightHeader: { flexDirection: "row", alignItems: "center", gap: 9 },
+  aiInsightIcon: { width: 38, height: 38, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: COLORS.grape },
+  aiInsightIconAttention: { backgroundColor: "#B27A16" },
+  aiInsightIconDanger: { backgroundColor: "#B54337" },
+  aiInsightEyebrow: { flex: 1, color: COLORS.grape, fontSize: 8, fontWeight: "900", letterSpacing: 0.9 },
+  aiInsightAction: { minHeight: 31, borderRadius: 12, paddingHorizontal: 10, backgroundColor: COLORS.white, flexDirection: "row", alignItems: "center", gap: 5 },
+  aiInsightActionText: { color: COLORS.grape, fontSize: 9, fontWeight: "900" },
+  aiInsightTitle: { color: COLORS.ink, fontSize: 17, lineHeight: 21, fontWeight: "900", letterSpacing: -0.35, marginTop: 14 },
+  aiInsightText: { color: COLORS.muted, fontSize: 10, lineHeight: 16, marginTop: 5, maxWidth: 430 },
   sectionTitle: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 26, marginBottom: 12 },
   sectionTitleText: { color: COLORS.ink, fontSize: 16, fontWeight: "900", letterSpacing: -0.3 },
   sectionAction: { color: COLORS.grape, fontSize: 12, fontWeight: "800" },
@@ -2304,6 +2312,24 @@ const createStyleDefinition = () => ({
   lifeFeatureIcon: { width: 43, height: 43, borderRadius: 14, backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center" },
   lifeFeatureEyebrow: { color: COLORS.grape, fontSize: 8, fontWeight: "900", letterSpacing: 0.7 },
   lifeFeatureTitle: { color: COLORS.ink, fontSize: 13, lineHeight: 17, fontWeight: "900", marginTop: 3 },
+  toolsIntro: { color: COLORS.muted, fontSize: 12, lineHeight: 18, marginTop: -10, marginBottom: 18, maxWidth: 440 },
+  toolFeaturedCard: { minHeight: 275, borderRadius: 26, padding: 21, overflow: "hidden", backgroundColor: "#2B214D", borderWidth: 1, borderColor: "#6540C8" },
+  toolFeaturedTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  toolFeaturedIcon: { width: 52, height: 52, borderRadius: 18, backgroundColor: COLORS.grape, alignItems: "center", justifyContent: "center", transform: [{ rotate: "-5deg" }] },
+  toolAvailableBadge: { minHeight: 25, borderRadius: 12, paddingHorizontal: 9, backgroundColor: COLORS.lime, alignItems: "center", justifyContent: "center" },
+  toolAvailableText: { color: "#242033", fontSize: 7, fontWeight: "900", letterSpacing: 0.7 },
+  toolFeaturedEyebrow: { color: COLORS.lime, fontSize: 8, fontWeight: "900", letterSpacing: 0.9, marginTop: 28 },
+  toolFeaturedTitle: { color: "#FFFFFF", fontSize: 23, lineHeight: 27, fontWeight: "900", letterSpacing: -0.7, marginTop: 7, maxWidth: 360 },
+  toolFeaturedText: { color: "#CEC7DD", fontSize: 11, lineHeight: 17, marginTop: 8, maxWidth: 390 },
+  toolOpenLine: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 23 },
+  toolOpenText: { color: COLORS.lime, fontSize: 11, fontWeight: "900" },
+  toolsComingTitle: { color: COLORS.ink, fontSize: 15, fontWeight: "900", marginTop: 27, marginBottom: 11 },
+  toolsComingGrid: { flexDirection: "row", gap: 10 },
+  toolComingCard: { flex: 1, minHeight: 160, borderRadius: 19, padding: 14, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.line },
+  toolComingIcon: { width: 38, height: 38, borderRadius: 13, backgroundColor: "#F0EBFF", alignItems: "center", justifyContent: "center" },
+  toolComingName: { color: COLORS.ink, fontSize: 12, fontWeight: "900", marginTop: 13 },
+  toolComingText: { color: COLORS.muted, fontSize: 9, lineHeight: 13, marginTop: 4 },
+  toolComingBadge: { color: COLORS.grape, fontSize: 7, fontWeight: "900", letterSpacing: 0.7, marginTop: 12 },
   listCard: { backgroundColor: COLORS.white, borderRadius: 20, paddingHorizontal: 15, borderWidth: 1, borderColor: COLORS.line },
   entryRow: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 12 },
   entryBorder: { borderBottomWidth: 1, borderBottomColor: COLORS.line },
