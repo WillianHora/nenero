@@ -92,22 +92,40 @@ type OnboardingData = {
 };
 
 const LIGHT_COLORS = {
-  ink: "#242033",
-  muted: "#777286",
-  paper: "#F7F5FA",
-  white: "#FFFFFF",
-  grape: "#7147E8",
-  grapeDark: "#532CB8",
-  lime: "#C9F45A",
-  coral: "#FF7B6B",
-  sky: "#C8ECFF",
-  line: "#EAE6F0",
+  ink: "#242033", muted: "#777286", textTertiary: "#9A94A8",
+  paper: "#F7F5FA", surface: "#FFFFFF", surfaceElevated: "#FFFFFF", surfaceMuted: "#F0EEF5",
+  line: "#EAE6F0", lineStrong: "#DCD5E8", mark: "#242033",
+  grape: "#7147E8", grapeDark: "#532CB8", lime: "#C9F45A", coral: "#FF7B6B", sky: "#C8ECFF",
+  placeholder: "#A9A3B2",
+  success: "#5D8A22", successSurface: "#EAF8D0", successBorder: "#D6E9AD",
+  warning: "#9A6810", warningSurface: "#FFF0CA", warningBorder: "#EED9A3",
+  danger: "#B54337", dangerSurface: "#FFF0ED", dangerBorder: "#F1C9C3",
+  info: "#277493", infoSurface: "#E7F4FB", infoBorder: "#C9E5F3",
+  accentSurface: "#F0EBFF", accentBorder: "#D9CDF8",
+  teal: "#167B6B", tealSurface: "#E4F7F3", tealBorder: "#CBE9E1",
 };
 const DARK_COLORS: typeof LIGHT_COLORS = {
-  ink: "#F4F0FA", muted: "#AAA3B8", paper: "#0F0D17", white: "#191624",
-  grape: "#9B7BFF", grapeDark: "#C2AEFF", lime: "#C9F45A", coral: "#FF8E80", sky: "#183443", line: "#2B2738",
+  ink: "#F4F0FA", muted: "#AAA3B8", textTertiary: "#7A7390",
+  paper: "#0F0D17", surface: "#1B1826", surfaceElevated: "#221E30", surfaceMuted: "#241F33",
+  line: "#2B2738", lineStrong: "#3A3450", mark: "#242033",
+  grape: "#9B7BFF", grapeDark: "#C2AEFF", lime: "#C9F45A", coral: "#FF8E80", sky: "#183443",
+  placeholder: "#726C82",
+  success: "#8FD35A", successSurface: "#1E2E16", successBorder: "#35502E",
+  warning: "#E8B24A", warningSurface: "#332916", warningBorder: "#4A3A1E",
+  danger: "#FF9B8F", dangerSurface: "#321E21", dangerBorder: "#563038",
+  info: "#7FCBE8", infoSurface: "#17303A", infoBorder: "#2C4A54",
+  accentSurface: "#29223B", accentBorder: "#493A68",
+  teal: "#62D7C3", tealSurface: "#17342F", tealBorder: "#315B53",
 };
 const COLORS = { ...LIGHT_COLORS };
+let IS_DARK = false;
+const withAlpha = (hex: string, alpha: number) => {
+  const value = hex.replace("#", "");
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
 type ThemeMode = "system" | "light" | "dark";
 const THEME_STORAGE_KEY = "@nenero/theme";
 
@@ -116,34 +134,36 @@ const expenseCategories = ["Mercado", "Casa", "Transporte", "Lazer", "Delivery",
 const incomeCategories = ["Salário", "Freelance", "Férias", "Bonificações", "13º salário", "Rendimentos", "Reembolso", "Venda", "Outras entradas"];
 const categoriesByKind: Record<EntryKind, string[]> = { expense: expenseCategories, income: incomeCategories };
 type CategoryVisual = { icon: keyof typeof MaterialCommunityIcons.glyphMap; color: string; background: string; border: string };
-const categoryVisuals: Record<string, CategoryVisual> = {
-  Mercado: { icon: "cart-outline", color: "#2F7D5A", background: "#E8F6EF", border: "#C9E8D8" },
-  Casa: { icon: "home-heart", color: "#6B4BC3", background: "#F0EBFF", border: "#DDD1F8" },
-  Transporte: { icon: "car-outline", color: "#2E7198", background: "#E7F4FB", border: "#C9E5F3" },
-  Lazer: { icon: "party-popper", color: "#B65A4F", background: "#FFF0ED", border: "#F5D2CD" },
-  Delivery: { icon: "moped", color: "#B66A22", background: "#FFF3E3", border: "#F0D7B7" },
-  Educação: { icon: "school-outline", color: "#3E63A8", background: "#EAF0FF", border: "#CBD8F5" },
-  Saúde: { icon: "medical-bag", color: "#B94467", background: "#FFEAF1", border: "#F3C8D7" },
-  Assinatura: { icon: "calendar-sync", color: "#7C4C9D", background: "#F5EAFB", border: "#E3CCEE" },
-  Outros: { icon: "shape-outline", color: "#676270", background: "#F0EEF2", border: "#DEDAE2" },
-  Salário: { icon: "cash", color: "#5D7E1D", background: "#EEF8D9", border: "#D6E9AD" },
-  Renda: { icon: "cash", color: "#5D7E1D", background: "#EEF8D9", border: "#D6E9AD" },
-  Freelance: { icon: "laptop", color: "#5F52B6", background: "#EFEDFF", border: "#D8D3F7" },
-  Férias: { icon: "beach", color: "#A96B00", background: "#FFF4D9", border: "#F0DCAD" },
-  Bonificações: { icon: "medal-outline", color: "#8B6A05", background: "#FFF7D6", border: "#EBDD9F" },
-  Bonificação: { icon: "medal-outline", color: "#8B6A05", background: "#FFF7D6", border: "#EBDD9F" },
-  "13º salário": { icon: "gift-outline", color: "#A24879", background: "#FCEAF4", border: "#EECDE0" },
-  Rendimentos: { icon: "chart-line", color: "#167B6B", background: "#E4F7F3", border: "#C1E7DF" },
-  Investimentos: { icon: "chart-line", color: "#167B6B", background: "#E4F7F3", border: "#C1E7DF" },
-  Reembolso: { icon: "cash-refund", color: "#2B709F", background: "#E7F3FC", border: "#C7E0F1" },
-  Venda: { icon: "tag-outline", color: "#B45245", background: "#FFF0EC", border: "#F2D0C9" },
-  "Outras entradas": { icon: "cash-plus", color: "#59646C", background: "#EDF1F3", border: "#D5DDE1" },
+type CategoryHue = { icon: keyof typeof MaterialCommunityIcons.glyphMap; light: string; dark: string };
+const categoryHues: Record<string, CategoryHue> = {
+  Mercado: { icon: "cart-outline", light: "#2F7D5A", dark: "#5FCB93" },
+  Casa: { icon: "home-heart", light: "#6B4BC3", dark: "#B39CFF" },
+  Transporte: { icon: "car-outline", light: "#2E7198", dark: "#6FC1E8" },
+  Lazer: { icon: "party-popper", light: "#B65A4F", dark: "#FF9B85" },
+  Delivery: { icon: "moped", light: "#B66A22", dark: "#F0A855" },
+  Educação: { icon: "school-outline", light: "#3E63A8", dark: "#8AAEEA" },
+  Saúde: { icon: "medical-bag", light: "#B94467", dark: "#FF8FB0" },
+  Assinatura: { icon: "calendar-sync", light: "#7C4C9D", dark: "#CC9AE8" },
+  Outros: { icon: "shape-outline", light: "#676270", dark: "#ADA8BA" },
+  Salário: { icon: "cash", light: "#5D7E1D", dark: "#B9D96A" },
+  Renda: { icon: "cash", light: "#5D7E1D", dark: "#B9D96A" },
+  Freelance: { icon: "laptop", light: "#5F52B6", dark: "#ABA0F0" },
+  Férias: { icon: "beach", light: "#A96B00", dark: "#F0B23E" },
+  Bonificações: { icon: "medal-outline", light: "#8B6A05", dark: "#E8C158" },
+  Bonificação: { icon: "medal-outline", light: "#8B6A05", dark: "#E8C158" },
+  "13º salário": { icon: "gift-outline", light: "#A24879", dark: "#F090C4" },
+  Rendimentos: { icon: "chart-line", light: "#167B6B", dark: "#5FD9C0" },
+  Investimentos: { icon: "chart-line", light: "#167B6B", dark: "#5FD9C0" },
+  Reembolso: { icon: "cash-refund", light: "#2B709F", dark: "#6FBEEA" },
+  Venda: { icon: "tag-outline", light: "#B45245", dark: "#FF9683" },
+  "Outras entradas": { icon: "cash-plus", light: "#59646C", dark: "#A6B0B8" },
 };
-const fallbackCategoryVisuals: Record<EntryKind, CategoryVisual> = {
-  expense: categoryVisuals.Outros!,
-  income: categoryVisuals["Outras entradas"]!,
+const fallbackCategoryHue: Record<EntryKind, string> = { expense: "Outros", income: "Outras entradas" };
+const getCategoryVisual = (category: string, kind: EntryKind): CategoryVisual => {
+  const hue = categoryHues[category] ?? categoryHues[fallbackCategoryHue[kind]]!;
+  const color = IS_DARK ? hue.dark : hue.light;
+  return { icon: hue.icon, color, background: withAlpha(color, IS_DARK ? 0.16 : 0.1), border: withAlpha(color, IS_DARK ? 0.34 : 0.22) };
 };
-const getCategoryVisual = (category: string, kind: EntryKind) => categoryVisuals[category] ?? fallbackCategoryVisuals[kind];
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const money = (value: number) => brl.format(value);
 const uid = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -187,6 +207,7 @@ function AppContent() {
   const systemColorScheme = useColorScheme();
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
   const isDark = themeMode === "dark" || (themeMode === "system" && systemColorScheme === "dark");
+  IS_DARK = isDark;
   Object.assign(COLORS, isDark ? DARK_COLORS : LIGHT_COLORS);
   styles = createStyles();
   const [session, setSession] = useState<Session | null>(null);
@@ -805,7 +826,7 @@ Antes de responder, confira silenciosamente:
           <Pressable style={styles.avatar} onPress={() => setModal("profile")} accessibilityLabel="Abrir perfil"><Text style={styles.avatarText}>{userInitials}</Text></Pressable>
         </View>
 
-        {cloudError ? <View style={styles.cloudError}><Feather name="cloud-off" size={14} color="#B54337" /><Text style={styles.cloudErrorText}>{cloudError}</Text></View> : null}
+        {cloudError ? <View style={styles.cloudError}><Feather name="cloud-off" size={14} color={COLORS.danger} /><Text style={styles.cloudErrorText}>{cloudError}</Text></View> : null}
 
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           {tab === "inicio" && (
@@ -1033,17 +1054,16 @@ function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, m
   analysis: AiAnalysis | null; analyzing: boolean; hasGoal: boolean; onAnalyze: () => void;
   onAdd: () => void; onEditEntry: (entry: Entry) => void;
 }) {
-  const darkTheme = COLORS.paper === DARK_COLORS.paper;
   const today = new Date().toLocaleDateString("pt-BR", {
     weekday: "long",
     day: "2-digit",
     month: "long",
   }).toUpperCase();
   const balanceGradient: [string, string] = analysis?.status === "danger"
-    ? darkTheme ? ["#54243A", "#2C172B"] : ["#7C3453", "#4E244B"]
+    ? IS_DARK ? ["#54243A", "#2C172B"] : ["#7C3453", "#4E244B"]
     : analysis?.status === "attention"
-      ? darkTheme ? ["#51327B", "#2D1E58"] : ["#8550C8", "#5B32C8"]
-      : darkTheme ? ["#4B2E86", "#27194F"] : ["#7951ED", "#5B32C8"];
+      ? IS_DARK ? ["#51327B", "#2D1E58"] : ["#8550C8", "#5B32C8"]
+      : IS_DARK ? ["#4B2E86", "#27194F"] : ["#7951ED", "#5B32C8"];
   return (
     <>
       <View style={styles.helloRow}>
@@ -1283,7 +1303,7 @@ function WalletList({ walletBalances, pots, dreamsBalance, onAdd, onEdit, onOpen
       <Pressable style={styles.dashedButton} onPress={onAdd}><Feather name="plus" size={20} color={COLORS.grape} /><Text style={styles.dashedText}>Criar outra carteira</Text></Pressable>
       {pots.length > 0 && <Pressable style={styles.dreamWalletPressable} onPress={onOpenDreams}>
         <LinearGradient colors={["#2B214D", "#6540C8"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.dreamWalletCard}>
-          <View style={styles.dreamWalletTop}><View style={styles.dreamWalletIcon}><MaterialCommunityIcons name="star-four-points" size={22} color="#242033" /></View><View style={styles.dreamWalletAutoBadge}><Text style={styles.dreamWalletAutoText}>CARTEIRA AUTOMÁTICA</Text></View></View>
+          <View style={styles.dreamWalletTop}><View style={styles.dreamWalletIcon}><MaterialCommunityIcons name="star-four-points" size={22} color={COLORS.mark} /></View><View style={styles.dreamWalletAutoBadge}><Text style={styles.dreamWalletAutoText}>CARTEIRA AUTOMÁTICA</Text></View></View>
           <Text style={styles.dreamWalletLabel}>Meus sonhos</Text><Text style={styles.dreamWalletBalance}>{money(dreamsBalance)}</Text>
           <Text style={styles.dreamWalletCopy}>{pots.length} {pots.length === 1 ? "cofrinho guardando um plano" : "cofrinhos guardando seus planos"}. Esse dinheiro continua seu, só saiu da rota do impulso.</Text>
           <View style={styles.dreamWalletOpen}><Text style={styles.dreamWalletOpenText}>Ver meus cofrinhos</Text><Feather name="arrow-up-right" size={16} color={COLORS.lime} /></View>
@@ -1311,7 +1331,7 @@ function SavingsPotList({ pots, wallets, onAdd, onDeposit, onDelete }: { pots: S
             <View style={styles.potTop}>
               <View style={styles.potIcon}><MaterialCommunityIcons name="piggy-bank-outline" size={25} color={COLORS.grape} /></View>
               <View style={styles.flex}><Text style={styles.potName}>{pot.name}</Text><Text style={styles.potDescription}>{pot.description || "Um objetivo com lugar marcado."}</Text></View>
-              <View style={styles.potTopActions}><Text style={styles.potPercent}>{progress}%</Text><Pressable accessibilityLabel={`Apagar cofrinho ${pot.name}`} style={styles.potDeleteIcon} onPress={() => onDelete(pot)}><Feather name="trash-2" size={15} color="#B54337" /></Pressable></View>
+              <View style={styles.potTopActions}><Text style={styles.potPercent}>{progress}%</Text><Pressable accessibilityLabel={`Apagar cofrinho ${pot.name}`} style={styles.potDeleteIcon} onPress={() => onDelete(pot)}><Feather name="trash-2" size={15} color={COLORS.danger} /></Pressable></View>
             </View>
             <View style={styles.potProgressTrack}><View style={[styles.potProgressFill, { width: `${progress}%` }]} /></View>
             <View style={styles.potValues}>
@@ -1319,12 +1339,12 @@ function SavingsPotList({ pots, wallets, onAdd, onDeposit, onDelete }: { pots: S
               <View style={styles.potGoalBlock}><Text style={styles.potValueLabel}>META</Text><Text style={styles.potGoal}>{money(pot.goal)}</Text></View>
             </View>
             <Text style={styles.potPlan}>{money(monthlyTarget)}/mês · até {deadline.toLocaleDateString("pt-BR", { month: "short", year: "numeric" })}</Text>
-            {pot.compoundInterest && <View style={styles.potYieldBadge}><Feather name="trending-up" size={13} color="#167B6B" /><Text style={styles.potYieldText}>{(realMonthlyRate * 100).toLocaleString("pt-BR", { maximumFractionDigits: 3 })}% ao mês, já descontada a inflação</Text></View>}
+            {pot.compoundInterest && <View style={styles.potYieldBadge}><Feather name="trending-up" size={13} color={COLORS.teal} /><Text style={styles.potYieldText}>{(realMonthlyRate * 100).toLocaleString("pt-BR", { maximumFractionDigits: 3 })}% ao mês, já descontada a inflação</Text></View>}
             {!!sourceWalletNames.length && <View style={styles.potSourceLine}><Feather name="corner-down-right" size={13} color={COLORS.muted} /><Text style={styles.potSourceText} numberOfLines={1}>Veio de {sourceWalletNames.join(", ")}</Text></View>}
             {remaining > 0 ? (
               <Pressable style={styles.potDepositButton} onPress={() => onDeposit(pot)}><Feather name="plus" size={17} color="white" /><Text style={styles.potDepositButtonText}>Colocar dinheiro</Text></Pressable>
             ) : (
-              <View style={styles.potComplete}><Feather name="check-circle" size={17} color="#66851D" /><Text style={styles.potCompleteText}>Meta batida. Esse porquinho está forte!</Text></View>
+              <View style={styles.potComplete}><Feather name="check-circle" size={17} color={COLORS.success} /><Text style={styles.potCompleteText}>Meta batida. Esse porquinho está forte!</Text></View>
             )}
           </View>
         );
@@ -1370,7 +1390,7 @@ function BottomNav({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
     { key: "recorrentes", label: "Planejados", icon: "repeat" }, { key: "cofrinhos", label: "Cofrinhos", icon: "target" },
     { key: "carteiras", label: "Carteiras", icon: "credit-card" }, { key: "ferramentas", label: "Ferramentas", icon: "tool" },
   ];
-  return <View style={styles.nav}>{tabs.map((item) => <Pressable key={item.key} style={styles.navItem} onPress={() => setTab(item.key)}><Feather name={item.icon} size={21} color={tab === item.key ? COLORS.grape : "#AAA4B3"} /><Text style={[styles.navLabel, tab === item.key && styles.navActive]}>{item.label}</Text>{tab === item.key && <View style={styles.navDot} />}</Pressable>)}</View>;
+  return <View style={styles.nav}>{tabs.map((item) => <Pressable key={item.key} style={styles.navItem} onPress={() => setTab(item.key)}><Feather name={item.icon} size={21} color={tab === item.key ? COLORS.grape : COLORS.muted} /><Text style={[styles.navLabel, tab === item.key && styles.navActive]}>{item.label}</Text>{tab === item.key && <View style={styles.navDot} />}</Pressable>)}</View>;
 }
 
 function Sheet({ visible, title, subtitle, onClose, children }: { visible: boolean; title: string; subtitle: string; onClose: () => void; children: React.ReactNode }) {
@@ -1385,12 +1405,12 @@ function Field({ label, value, onChange, placeholder, keyboardType, secureTextEn
   keyboardType?: "decimal-pad" | "number-pad" | "email-address";
   secureTextEntry?: boolean;
 }) {
-  return <View style={styles.field}><Text style={styles.fieldLabel}>{label}</Text><TextInput style={styles.input} value={value} onChangeText={onChange} placeholder={placeholder} placeholderTextColor="#B4AFBB" keyboardType={keyboardType} secureTextEntry={secureTextEntry} autoCapitalize={keyboardType === "email-address" ? "none" : undefined} autoCorrect={keyboardType === "email-address" ? false : undefined} /></View>;
+  return <View style={styles.field}><Text style={styles.fieldLabel}>{label}</Text><TextInput style={styles.input} value={value} onChangeText={onChange} placeholder={placeholder} placeholderTextColor={COLORS.placeholder} keyboardType={keyboardType} secureTextEntry={secureTextEntry} autoCapitalize={keyboardType === "email-address" ? "none" : undefined} autoCorrect={keyboardType === "email-address" ? false : undefined} /></View>;
 }
 
 function CategoryChip({ category, kind, selected, onPress }: { category: string; kind: EntryKind; selected: boolean; onPress: () => void }) {
   const visual = getCategoryVisual(category, kind);
-  return <Pressable style={[styles.chip, { borderColor: visual.border }, selected && { backgroundColor: visual.color, borderColor: visual.color }]} onPress={onPress} accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel={`Categoria ${category}`}><MaterialCommunityIcons name={visual.icon} size={15} color={selected ? COLORS.white : visual.color} /><Text style={[styles.chipText, selected && styles.chipTextActive]}>{category}</Text></Pressable>;
+  return <Pressable style={[styles.chip, { borderColor: visual.border }, selected && { backgroundColor: visual.color, borderColor: visual.color }]} onPress={onPress} accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel={`Categoria ${category}`}><MaterialCommunityIcons name={visual.icon} size={15} color={selected ? "#FFFFFF" : visual.color} /><Text style={[styles.chipText, selected && styles.chipTextActive]}>{category}</Text></Pressable>;
 }
 
 function EntryModal({ visible, wallets, item, onClose, onSave, onDelete }: { visible: boolean; wallets: Wallet[]; item: Entry | null; onClose: () => void; onSave: (entry: Omit<Entry, "id">) => void; onDelete?: () => void }) {
@@ -1438,7 +1458,7 @@ function EntryModal({ visible, wallets, item, onClose, onSave, onDelete }: { vis
     <Text style={styles.fieldLabel}>{kind === "income" ? "Tipo de entrada" : "Categoria"}</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>{activeCategories.map(c => <CategoryChip key={c} category={c} kind={kind} selected={category === c} onPress={() => setCategory(c)} />)}</ScrollView>
     <Text style={styles.fieldLabel}>Carteira</Text><View style={styles.walletOptions}>{wallets.map(w => <Pressable key={w.id} style={[styles.walletOption, walletId === w.id && styles.walletOptionActive]} onPress={() => setWalletId(w.id)}><View style={[styles.colorDot, { backgroundColor: w.color }]} /><Text style={styles.walletOptionText}>{w.name}</Text>{walletId === w.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
     <PrimaryButton label={item ? "Salvar alterações" : "Salvar lançamento"} onPress={save} disabled={!title.trim() || !value || !validDate || !walletId} />
-    {item && onDelete && <Pressable style={styles.deleteEntryButton} onPress={onDelete}><Feather name="trash-2" size={17} color="#B54337" /><Text style={styles.deleteEntryButtonText}>Excluir {item.kind === "income" ? "entrada" : "gasto"}</Text></Pressable>}
+    {item && onDelete && <Pressable style={styles.deleteEntryButton} onPress={onDelete}><Feather name="trash-2" size={17} color={COLORS.danger} /><Text style={styles.deleteEntryButtonText}>Excluir {item.kind === "income" ? "entrada" : "gasto"}</Text></Pressable>}
   </Sheet>;
 }
 
@@ -1450,7 +1470,7 @@ function WalletModal({ visible, item, onClose, onSave, onDelete }: { visible: bo
     <Field label="Nome da carteira" value={name} onChange={setName} placeholder="Ex.: Conta do dia a dia" />
     {!item && <Field label="Saldo inicial" value={initial} onChange={setInitial} placeholder="R$ 0,00" keyboardType="decimal-pad" />}
     <PrimaryButton label={item ? "Salvar alterações" : "Criar carteira"} onPress={save} disabled={!name.trim()} />
-    {item && onDelete && <Pressable style={styles.deleteWalletButton} onPress={onDelete}><Feather name="trash-2" size={16} color="#B54337" /><Text style={styles.deleteWalletButtonText}>Excluir carteira</Text></Pressable>}
+    {item && onDelete && <Pressable style={styles.deleteWalletButton} onPress={onDelete}><Feather name="trash-2" size={16} color={COLORS.danger} /><Text style={styles.deleteWalletButtonText}>Excluir carteira</Text></Pressable>}
   </Sheet>;
 }
 
@@ -1488,7 +1508,7 @@ function RecurringModal({ visible, wallets, item, onClose, onSave }: { visible: 
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>{activeCategories.map(c => <CategoryChip key={c} category={c} kind={kind} selected={category === c} onPress={() => setCategory(c)} />)}</ScrollView>
       <Text style={styles.fieldLabel}>{kind === "income" ? "Carteira que recebe" : "Carteira usada no pagamento"}</Text>
       <View style={styles.walletOptions}>{wallets.map(wallet => <Pressable key={wallet.id} style={[styles.walletOption, walletId === wallet.id && styles.walletOptionActive]} onPress={() => setWalletId(wallet.id)}><View style={[styles.colorDot, { backgroundColor: wallet.color }]} /><Text style={styles.walletOptionText}>{wallet.name}</Text>{walletId === wallet.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
-      {kind === "income" && <View style={styles.autoPostNote}><Feather name="zap" size={16} color="#66851D" /><Text style={styles.autoPostText}>O valor será contabilizado na data programada, mesmo que o Nenero fique fechado naquele dia.</Text></View>}
+      {kind === "income" && <View style={styles.autoPostNote}><Feather name="zap" size={16} color={COLORS.success} /><Text style={styles.autoPostText}>O valor será contabilizado na data programada, mesmo que o Nenero fique fechado naquele dia.</Text></View>}
     <PrimaryButton label={item ? "Salvar alterações" : kind === "income" ? "Programar entrada" : "Salvar gasto fixo"} onPress={save} disabled={!title.trim() || !value || !day || !walletId} />
   </Sheet>;
 }
@@ -1520,18 +1540,18 @@ function SavingsPotModal({ visible, onClose, onSave }: { visible: boolean; onClo
       value={description}
       onChangeText={setDescription}
       placeholder="Por que essa meta importa?"
-      placeholderTextColor="#B4AFBB"
+      placeholderTextColor={COLORS.placeholder}
       multiline
       maxLength={180}
       textAlignVertical="top"
     />
     <Field label="Quanto quer juntar?" value={goalValue} onChange={setGoalValue} placeholder="R$ 1.800,00" keyboardType="decimal-pad" />
     <Field label="Em quantos meses?" value={months} onChange={setMonths} placeholder="Ex.: 9" keyboardType="number-pad" />
-    <View style={styles.interestToggleCard}><View style={styles.interestToggleCopy}><Text style={styles.interestToggleTitle}>Este cofrinho rende juros compostos?</Text><Text style={styles.interestToggleHint}>Ative para considerar o rendimento na projeção da meta.</Text></View><Switch value={compoundInterest} onValueChange={setCompoundInterest} trackColor={{ false: "#D8D2DE", true: "#B9A8EC" }} thumbColor={compoundInterest ? COLORS.grape : "#FFFFFF"} /></View>
+    <View style={styles.interestToggleCard}><View style={styles.interestToggleCopy}><Text style={styles.interestToggleTitle}>Este cofrinho rende juros compostos?</Text><Text style={styles.interestToggleHint}>Ative para considerar o rendimento na projeção da meta.</Text></View><Switch value={compoundInterest} onValueChange={setCompoundInterest} trackColor={{ false: COLORS.line, true: COLORS.accentBorder }} thumbColor={compoundInterest ? COLORS.grape : "#FFFFFF"} /></View>
     {compoundInterest && <View style={styles.interestFields}>
       <Field label="Rendimento ao mês (%)" value={monthlyInterestRate} onChange={setMonthlyInterestRate} placeholder="Ex.: 0,8" keyboardType="decimal-pad" />
       <Field label="Inflação ao ano (%) · opcional" value={annualInflationRate} onChange={setAnnualInflationRate} placeholder="Ex.: 4,5" keyboardType="decimal-pad" />
-      {interestConfigValid && nominalRate > 0 && <View style={styles.realRateCard}><Feather name="shield" size={16} color="#167B6B" /><View style={{ flex: 1 }}><Text style={styles.realRateLabel}>RENDIMENTO REAL ESTIMADO</Text><Text style={styles.realRateValue}>{(realMonthlyRate * 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 3 })}% ao mês</Text><Text style={styles.realRateHint}>Rendimento nominal menos o efeito composto da inflação anual.</Text></View></View>}
+      {interestConfigValid && nominalRate > 0 && <View style={styles.realRateCard}><Feather name="shield" size={16} color={COLORS.teal} /><View style={{ flex: 1 }}><Text style={styles.realRateLabel}>RENDIMENTO REAL ESTIMADO</Text><Text style={styles.realRateValue}>{(realMonthlyRate * 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 3 })}% ao mês</Text><Text style={styles.realRateHint}>Rendimento nominal menos o efeito composto da inflação anual.</Text></View></View>}
     </View>}
     {goal > 0 && parsedMonths > 0 && <View style={styles.potPreview}><Feather name={compoundInterest ? "trending-up" : "calendar"} size={17} color={COLORS.grape} /><Text style={styles.potPreviewText}>Para chegar lá: {money(monthlyTarget)} por mês{compoundInterest ? ", considerando o rendimento real." : "."}</Text></View>}
     <PrimaryButton label="Criar cofrinho" onPress={() => valid && onSave({ name: name.trim(), description: description.trim(), goal, months: parsedMonths, compoundInterest, monthlyInterestRate: compoundInterest ? nominalRate : 0, annualInflationRate: compoundInterest ? inflationRate : 0 })} disabled={!valid} />
@@ -1588,7 +1608,7 @@ function SavingsPotDeleteModal({ visible, pot, wallets, onClose, onDelete }: { v
         <Feather name="chevron-right" size={19} color={COLORS.grape} />
       </Pressable>
       <Pressable style={styles.potDeleteDiscardButton} onPress={() => onDelete("discard")}>
-        <View style={styles.potDeleteDiscardIcon}><Feather name="trash-2" size={19} color="#B54337" /></View>
+        <View style={styles.potDeleteDiscardIcon}><Feather name="trash-2" size={19} color={COLORS.danger} /></View>
         <View style={styles.flex}><Text style={styles.potDeleteDiscardTitle}>Apagar sem devolver</Text><Text style={styles.potDeleteChoiceText}>O histórico do cofrinho some e os valores não voltam ao saldo disponível.</Text></View>
       </Pressable>
     </> : <Pressable style={styles.potDeleteEmptyButton} onPress={() => onDelete("discard")}><Feather name="trash-2" size={16} color="#FFFFFF" /><Text style={styles.potDeleteEmptyButtonText}>Apagar cofrinho vazio</Text></Pressable>}
@@ -1720,7 +1740,7 @@ Não invente necessidade, parcelamento, juros ou utilidade do produto.
     }
   };
 
-  const verdictColor = verdict?.status === "not_worth_it" ? COLORS.coral : verdict?.status === "think_twice" ? "#D69A20" : "#789B22";
+  const verdictColor = verdict?.status === "not_worth_it" ? COLORS.coral : verdict?.status === "think_twice" ? COLORS.warning : COLORS.success;
   return <Sheet visible={visible} title="Calculadora de vida gasta" subtitle="Converta preço em tempo de trabalho antes de passar o cartão." onClose={onClose}>
     <View style={styles.lifeSalaryCard}>
       <Text style={styles.lifeSalaryLabel}>SALÁRIO IDENTIFICADO NESTE MÊS</Text>
@@ -1817,15 +1837,15 @@ function BankImportModal({ visible, wallets, existingEntries, onClose, onImport 
         <Text style={styles.bankImportHeroText}>Compatível com Inter e Nubank. Entradas, gastos, categorias e possíveis transferências são identificados para sua revisão.</Text>
         <Pressable style={[styles.bankFileButton, reading && styles.buttonDisabled]} onPress={selectFile} disabled={reading}>{reading ? <ActivityIndicator color="#FFFFFF" /> : <Feather name="upload" size={18} color="#FFFFFF" />}<Text style={styles.bankFileButtonText}>{reading ? "Lendo o extrato..." : "Escolher arquivo CSV"}</Text></Pressable>
       </View>
-      <View style={styles.bankImportSafety}><Feather name="check-circle" size={17} color="#66851D" /><Text style={styles.bankImportSafetyText}>Nada entra automaticamente. Transferências suspeitas e linhas repetidas ficam desmarcadas.</Text></View>
-      {error ? <View style={styles.bankImportError}><Feather name="alert-circle" size={17} color="#B54337" /><Text style={styles.bankImportErrorText}>{error}</Text></View> : null}
+      <View style={styles.bankImportSafety}><Feather name="check-circle" size={17} color={COLORS.success} /><Text style={styles.bankImportSafetyText}>Nada entra automaticamente. Transferências suspeitas e linhas repetidas ficam desmarcadas.</Text></View>
+      {error ? <View style={styles.bankImportError}><Feather name="alert-circle" size={17} color={COLORS.danger} /><Text style={styles.bankImportErrorText}>{error}</Text></View> : null}
     </> : <>
       <View style={styles.bankFileSummary}><MaterialCommunityIcons name="bank-outline" size={24} color={COLORS.grape} /><View style={styles.flex}><Text style={styles.bankFileBank}>{fileInfo.bankName}</Text><Text style={styles.bankFileName} numberOfLines={1}>{fileInfo.fileName}</Text></View><Pressable style={styles.bankFileChange} onPress={selectFile}><Text style={styles.bankFileChangeText}>Trocar</Text></Pressable></View>
       <Text style={styles.fieldLabel}>Em qual carteira esse extrato entra?</Text>
       <View style={styles.walletOptions}>{wallets.map((wallet) => <Pressable key={wallet.id} style={[styles.walletOption, walletId === wallet.id && styles.walletOptionActive]} onPress={() => setWalletId(wallet.id)}><View style={[styles.colorDot, { backgroundColor: wallet.color }]} /><Text style={styles.walletOptionText}>{wallet.name}</Text>{walletId === wallet.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
       {!wallets.length && <View style={styles.bankImportError}><Text style={styles.bankImportErrorText}>Crie uma carteira antes de importar.</Text></View>}
       <View style={styles.bankImportTotals}><View style={styles.bankImportTotalBlock}><Text style={styles.bankImportTotalLabel}>SELECIONADAS</Text><Text style={styles.bankImportTotalValue}>{selected.length}</Text></View><View style={styles.bankImportTotalBlock}><Text style={styles.bankImportTotalLabel}>ENTRADAS</Text><Text style={styles.bankImportTotalMoney}>+ {money(income)}</Text></View><View style={styles.bankImportTotalBlock}><Text style={styles.bankImportTotalLabel}>GASTOS</Text><Text style={styles.bankImportTotalMoney}>− {money(expenses)}</Text></View></View>
-      {(drafts.some((draft) => draft.transferLike) || drafts.some((draft) => draft.duplicate) || fileInfo.ignoredRows > 0) && <View style={styles.bankReviewNotice}><MaterialCommunityIcons name="text-box-search-outline" size={19} color="#9A6810" /><Text style={styles.bankReviewNoticeText}>Linhas suspeitas, repetidas ou inválidas foram separadas. Revise antes de importar.</Text></View>}
+      {(drafts.some((draft) => draft.transferLike) || drafts.some((draft) => draft.duplicate) || fileInfo.ignoredRows > 0) && <View style={styles.bankReviewNotice}><MaterialCommunityIcons name="text-box-search-outline" size={19} color={COLORS.warning} /><Text style={styles.bankReviewNoticeText}>Linhas suspeitas, repetidas ou inválidas foram separadas. Revise antes de importar.</Text></View>}
       <View style={styles.bankReviewHeader}><Text style={styles.bankReviewTitle}>O que entra no Nenero?</Text><Pressable onPress={() => setDrafts((current) => current.map((draft) => ({ ...draft, selected: false })))}><Text style={styles.bankReviewActionText}>Limpar</Text></Pressable></View>
       <View style={styles.bankDraftList}>{drafts.map((draft) => {
         const visual = getCategoryVisual(draft.category, draft.kind);
@@ -1940,7 +1960,7 @@ function ProfileModal({ visible, goal, userName, userEmail, userInitials, onClos
       <View style={styles.profileNameEditorHeader}>
         <Text style={styles.fieldLabel}>Como quer ser chamado?</Text>
         {nameSaveStatus === "saving" ? <View style={styles.profileNameStatus}><ActivityIndicator size="small" color={COLORS.grape} /><Text style={styles.profileNameStatusText}>Salvando...</Text></View> : null}
-        {nameSaveStatus === "saved" ? <View style={styles.profileNameStatus}><Feather name="check-circle" size={13} color="#66851D" /><Text style={styles.profileNameSavedText}>Salvo</Text></View> : null}
+        {nameSaveStatus === "saved" ? <View style={styles.profileNameStatus}><Feather name="check-circle" size={13} color={COLORS.success} /><Text style={styles.profileNameSavedText}>Salvo</Text></View> : null}
       </View>
       <TextInput
         style={styles.input}
@@ -1949,7 +1969,7 @@ function ProfileModal({ visible, goal, userName, userEmail, userInitials, onClos
         onBlur={() => { void saveName(); }}
         maxLength={40}
         placeholder="Seu primeiro nome"
-        placeholderTextColor="#B4AFBB"
+        placeholderTextColor={COLORS.placeholder}
         autoCapitalize="words"
         returnKeyType="done"
       />
@@ -1965,7 +1985,7 @@ function ProfileModal({ visible, goal, userName, userEmail, userInitials, onClos
       multiline
       maxLength={600}
       placeholder="Ex.: Quero guardar R$ 800 por mês para montar minha reserva de emergência e reduzir os gastos com delivery."
-      placeholderTextColor="#A9A3B2"
+      placeholderTextColor={COLORS.placeholder}
       textAlignVertical="top"
     />
     <Text style={styles.goalHint}>Escreva como se estivesse conversando com alguém. A IA usará esse objetivo para avaliar o mês.</Text>
@@ -1979,13 +1999,13 @@ function ProfileModal({ visible, goal, userName, userEmail, userInitials, onClos
       </Pressable>
       {passwordEditorOpen ? <View style={styles.passwordEditor}>
         <Text style={styles.fieldLabel}>Senha atual</Text>
-        <TextInput style={styles.input} value={currentPassword} onChangeText={(value) => { setCurrentPassword(value); setPasswordError(""); setPasswordSaveStatus("idle"); }} placeholder="Digite sua senha atual" placeholderTextColor="#B4AFBB" secureTextEntry autoComplete="current-password" />
+        <TextInput style={styles.input} value={currentPassword} onChangeText={(value) => { setCurrentPassword(value); setPasswordError(""); setPasswordSaveStatus("idle"); }} placeholder="Digite sua senha atual" placeholderTextColor={COLORS.placeholder} secureTextEntry autoComplete="current-password" />
         <Text style={styles.fieldLabel}>Nova senha</Text>
-        <TextInput style={styles.input} value={newPassword} onChangeText={(value) => { setNewPassword(value); setPasswordError(""); setPasswordSaveStatus("idle"); }} placeholder="Pelo menos 8 caracteres" placeholderTextColor="#B4AFBB" secureTextEntry autoComplete="new-password" />
+        <TextInput style={styles.input} value={newPassword} onChangeText={(value) => { setNewPassword(value); setPasswordError(""); setPasswordSaveStatus("idle"); }} placeholder="Pelo menos 8 caracteres" placeholderTextColor={COLORS.placeholder} secureTextEntry autoComplete="new-password" />
         <Text style={styles.fieldLabel}>Confirmar nova senha</Text>
-        <TextInput style={styles.input} value={passwordConfirmation} onChangeText={(value) => { setPasswordConfirmation(value); setPasswordError(""); setPasswordSaveStatus("idle"); }} placeholder="Digite novamente" placeholderTextColor="#B4AFBB" secureTextEntry autoComplete="new-password" onSubmitEditing={() => { void savePassword(); }} />
+        <TextInput style={styles.input} value={passwordConfirmation} onChangeText={(value) => { setPasswordConfirmation(value); setPasswordError(""); setPasswordSaveStatus("idle"); }} placeholder="Digite novamente" placeholderTextColor={COLORS.placeholder} secureTextEntry autoComplete="new-password" onSubmitEditing={() => { void savePassword(); }} />
         {passwordError ? <Text style={styles.profileNameError}>{passwordError}</Text> : null}
-        {passwordSaveStatus === "saved" ? <View style={styles.passwordSuccess}><Feather name="check-circle" size={16} color="#66851D" /><Text style={styles.passwordSuccessText}>Senha alterada com sucesso.</Text></View> : null}
+        {passwordSaveStatus === "saved" ? <View style={styles.passwordSuccess}><Feather name="check-circle" size={16} color={COLORS.success} /><Text style={styles.passwordSuccessText}>Senha alterada com sucesso.</Text></View> : null}
         <PrimaryButton label={passwordSaveStatus === "saving" ? "Alterando senha..." : "Alterar senha"} onPress={() => { void savePassword(); }} disabled={passwordSaveStatus === "saving" || !currentPassword || !newPassword || !passwordConfirmation} />
       </View> : null}
     </View>
@@ -1997,13 +2017,13 @@ function ProfileModal({ visible, goal, userName, userEmail, userInitials, onClos
         <Feather name="chevron-right" size={20} color={COLORS.grape} />
       </Pressable>
     </View>
-    <Pressable style={styles.signOutButton} onPress={onSignOut}><Feather name="log-out" size={16} color="#B54337" /><Text style={styles.signOutButtonText}>Sair desta conta</Text></Pressable>
+    <Pressable style={styles.signOutButton} onPress={onSignOut}><Feather name="log-out" size={16} color={COLORS.danger} /><Text style={styles.signOutButtonText}>Sair desta conta</Text></Pressable>
   </Sheet>;
 }
 
 function AppLoadingScreen() {
   return <SafeAreaView style={styles.authSafe}>
-    <StatusBar style={COLORS.paper === DARK_COLORS.paper ? "light" : "dark"} />
+    <StatusBar style={IS_DARK ? "light" : "dark"} />
     <View style={styles.loadingScreen}>
       <View style={styles.authBrandMark}><Text style={styles.authBrandFace}>◡</Text></View>
       <ActivityIndicator color={COLORS.grape} />
@@ -2014,7 +2034,7 @@ function AppLoadingScreen() {
 
 function SupabaseSetupScreen() {
   return <SafeAreaView style={styles.authSafe}>
-    <StatusBar style={COLORS.paper === DARK_COLORS.paper ? "light" : "dark"} />
+    <StatusBar style={IS_DARK ? "light" : "dark"} />
     <View style={styles.setupScreen}>
       <View style={styles.authBrandMark}><Text style={styles.authBrandFace}>◡</Text></View>
       <Text style={styles.authTitle}>Falta ligar a nuvem</Text>
@@ -2079,7 +2099,7 @@ function OnboardingScreen({ onComplete }: { onComplete: (data: OnboardingData) =
     }
   };
   return <SafeAreaView style={styles.onboardingSafe}>
-    <StatusBar style={COLORS.paper === DARK_COLORS.paper ? "light" : "dark"} />
+    <StatusBar style={IS_DARK ? "light" : "dark"} />
     <KeyboardAvoidingView style={styles.onboardingKeyboard} behavior={Platform.OS === "ios" ? "padding" : "height"}>
       <View style={styles.onboardingTop}>
         <View style={styles.onboardingBrand}><View style={styles.brandMark}><Text style={styles.brandFace}>◡</Text></View><Text style={styles.brand}>nenero</Text></View>
@@ -2100,11 +2120,11 @@ function OnboardingScreen({ onComplete }: { onComplete: (data: OnboardingData) =
           {step === 2 && <>
             <Field label="Renda líquida mensal" value={monthlyIncome} onChange={setMonthlyIncome} placeholder="R$ 3.500,00" keyboardType="decimal-pad" />
             <Field label="Dia em que costuma receber" value={incomeDay} onChange={setIncomeDay} placeholder="Ex.: 5" keyboardType="number-pad" />
-            {parsedIncome > 0 && parsedIncomeDay >= 1 && parsedIncomeDay <= 31 && <View style={styles.onboardingPreview}><Feather name="repeat" size={16} color="#66851D" /><Text style={styles.onboardingPreviewText}>Pode avisar os boletos: {money(parsedIncome)} serão programados todo dia {parsedIncomeDay} na carteira {walletName || "principal"}.</Text></View>}
+            {parsedIncome > 0 && parsedIncomeDay >= 1 && parsedIncomeDay <= 31 && <View style={styles.onboardingPreview}><Feather name="repeat" size={16} color={COLORS.success} /><Text style={styles.onboardingPreviewText}>Pode avisar os boletos: {money(parsedIncome)} serão programados todo dia {parsedIncomeDay} na carteira {walletName || "principal"}.</Text></View>}
           </>}
           {step === 3 && <>
             <Text style={styles.fieldLabel}>Meu objetivo financeiro</Text>
-            <TextInput style={styles.onboardingGoalInput} value={financialGoal} onChangeText={setFinancialGoal} placeholder="Ex.: Quero montar uma reserva de emergência e reduzir os gastos por impulso." placeholderTextColor="#A9A3B2" multiline maxLength={600} textAlignVertical="top" />
+            <TextInput style={styles.onboardingGoalInput} value={financialGoal} onChangeText={setFinancialGoal} placeholder="Ex.: Quero montar uma reserva de emergência e reduzir os gastos por impulso." placeholderTextColor={COLORS.placeholder} multiline maxLength={600} textAlignVertical="top" />
             <View style={styles.onboardingReady}><View style={styles.onboardingReadyFace}><Text style={styles.onboardingReadyFaceText}>◡</Text></View><Text style={styles.onboardingReadyText}>Carteira, renda e objetivo vão entrar prontos. A parte de ficar milionário continua com você.</Text></View>
           </>}
           {error ? <Text style={styles.authError}>{error}</Text> : null}
@@ -2138,7 +2158,7 @@ function AuthScreen() {
 
   const valid = email.includes("@") && password.length >= 6;
   return <SafeAreaView style={styles.authSafe}>
-    <StatusBar style={COLORS.paper === DARK_COLORS.paper ? "light" : "dark"} />
+    <StatusBar style={IS_DARK ? "light" : "dark"} />
     <KeyboardAvoidingView style={styles.authKeyboard} behavior={Platform.OS === "ios" ? "padding" : "height"}>
       <ScrollView contentContainerStyle={styles.authScroll} keyboardShouldPersistTaps="handled">
         <View style={styles.authBrandRow}><View style={styles.authBrandMark}><Text style={styles.authBrandFace}>◡</Text></View><Text style={styles.authBrand}>nenero</Text></View>
@@ -2157,7 +2177,7 @@ function AuthScreen() {
 }
 
 function AnalysisModal({ visible, analysis, loading, error, onRetry, onClose }: { visible: boolean; analysis: AiAnalysis | null; loading: boolean; error: string; onRetry: () => void; onClose: () => void }) {
-  const statusColor = analysis?.status === "danger" ? COLORS.coral : analysis?.status === "attention" ? "#D69A20" : "#789B22";
+  const statusColor = analysis?.status === "danger" ? COLORS.coral : analysis?.status === "attention" ? COLORS.warning : COLORS.success;
   return <Sheet visible={visible} title="Papo reto do Nenero" subtitle="Uma leitura do seu mês com base no seu objetivo." onClose={onClose}>
     {loading ? <View style={styles.analysisLoading}><ActivityIndicator size="large" color={COLORS.grape} /><Text style={styles.analysisLoadingTitle}>Fazendo as contas sem julgar...</Text><Text style={styles.analysisLoadingText}>O Nenero está comparando entradas, gastos, contas e seu objetivo.</Text></View> : error ? <View style={styles.analysisError}><Feather name="wifi-off" size={24} color={COLORS.coral} /><Text style={styles.analysisErrorTitle}>A conversa não rolou</Text><Text style={styles.analysisErrorText}>{error}</Text><PrimaryButton label="Tentar novamente" onPress={onRetry} /></View> : analysis ? <>
       <View style={[styles.analysisStatus, { backgroundColor: `${statusColor}18` }]}><View style={[styles.analysisStatusDot, { backgroundColor: statusColor }]} /><View style={styles.flex}><Text style={[styles.analysisStatusLabel, { color: statusColor }]}>{analysis.status === "ok" ? "TUDO SOB CONTROLE" : analysis.status === "attention" ? "ATENÇÃO" : "PERIGO"}</Text><Text style={styles.analysisHeadline}>{analysis.headline}</Text></View></View>
@@ -2179,54 +2199,36 @@ function PrimaryButton({ label, onPress, disabled }: { label: string; onPress: (
   return <Pressable style={[styles.primaryButton, disabled && styles.buttonDisabled]} onPress={onPress} disabled={disabled}><Text style={styles.primaryButtonText}>{label}</Text><Feather name="arrow-right" size={18} color="white" /></Pressable>;
 }
 
-const DARK_LITERAL_COLORS: Record<string, string> = {
-  "#F0EBFF": "#29223B", "#F3EFFF": "#28213A", "#EEE8FF": "#29223B", "#F3EEFF": "#28213A",
-  "#EDE6FF": "#2B2340", "#EDE9F2": "#2B2738", "#E9E3FA": "#322846", "#D9CDF8": "#493A68",
-  "#DED3FF": "#493A68", "#BFAFF0": "#67528F", "#BBA7F4": "#67528F", "#B9A8EC": "#67528F", "#B9A6EE": "#67528F",
-  "#EAF8D0": "#233019", "#F0F9D9": "#26351A", "#58721B": "#C9F45A", "#66851D": "#B9E45A",
-  "#65861E": "#B9E45A", "#789B22": "#C9F45A", "#71804A": "#B5C98B",
-  "#FFF0ED": "#321E21", "#FFF7F5": "#2A1B20", "#FFE0DC": "#442326", "#F0BEB8": "#71383A",
-  "#B54337": "#FF9B8F", "#C95043": "#FF9B8F", "#FFF0CA": "#332916", "#D69A20": "#F3C765", "#9A6810": "#E6B957",
-  "#E4F7F3": "#17342F", "#F2FBF8": "#142B27", "#CBE9E1": "#315B53", "#167B6B": "#62D7C3",
-  "#125F54": "#83E3D2", "#467970": "#9BCFC6", "#36758C": "#79C9E8", "#277493": "#83CBE4", "#4D7481": "#9CC7D4",
-  "#D3CEDA": "#4A4455", "#AAA4B3": "#AAA3B8", "#575162": "#C7C1D2", "#45402E": "#D3CDA9", "#D7D1E0": "#D7D1E0",
-};
-const applyLiteralTheme = <T,>(value: T): T => {
-  if (typeof value === "string") return (DARK_LITERAL_COLORS[value.toUpperCase()] ?? value) as T;
-  if (Array.isArray(value)) return value.map(applyLiteralTheme) as T;
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, applyLiteralTheme(item)])) as T;
-  return value;
-};
 const createStyleDefinition = () => ({
   safe: { flex: 1, backgroundColor: COLORS.paper },
-  onboardingSafe: { flex: 1, backgroundColor: "#F6F2FF" },
+  onboardingSafe: { flex: 1, backgroundColor: COLORS.paper },
   onboardingKeyboard: { flex: 1 },
   onboardingTop: { height: 64, paddingHorizontal: 22, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   onboardingBrand: { flexDirection: "row", alignItems: "center", gap: 9 },
   onboardingCount: { color: COLORS.muted, fontSize: 11, fontWeight: "800" },
   onboardingTrack: { flexDirection: "row", gap: 7, paddingHorizontal: 22 },
-  onboardingTrackPart: { flex: 1, height: 5, borderRadius: 3, backgroundColor: "#DED7EA" },
+  onboardingTrackPart: { flex: 1, height: 5, borderRadius: 3, backgroundColor: COLORS.line },
   onboardingTrackPartActive: { backgroundColor: COLORS.grape },
   onboardingContent: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 42, paddingBottom: 24, maxWidth: 540, width: "100%", alignSelf: "center" },
-  onboardingIcon: { width: 64, height: 64, borderRadius: 22, backgroundColor: COLORS.white, borderWidth: 1, borderColor: "#DFD5FA", alignItems: "center", justifyContent: "center", shadowColor: COLORS.grapeDark, shadowOpacity: 0.1, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 4, transform: [{ rotate: "-4deg" }] },
+  onboardingIcon: { width: 64, height: 64, borderRadius: 22, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.accentBorder, alignItems: "center", justifyContent: "center", shadowColor: COLORS.grapeDark, shadowOpacity: 0.1, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 4, transform: [{ rotate: "-4deg" }] },
   onboardingEyebrow: { color: COLORS.grape, fontSize: 9, fontWeight: "900", letterSpacing: 1.4, marginTop: 28 },
   onboardingTitle: { color: COLORS.ink, fontSize: 34, lineHeight: 39, fontWeight: "900", letterSpacing: -1.4, marginTop: 7, maxWidth: 400 },
   onboardingCopy: { color: COLORS.muted, fontSize: 13, lineHeight: 19, marginTop: 11, maxWidth: 430 },
   onboardingForm: { marginTop: 32 },
-  onboardingGoalInput: { minHeight: 150, backgroundColor: COLORS.white, borderWidth: 1, borderColor: "#DCD4E7", borderRadius: 20, padding: 16, color: COLORS.ink, fontSize: 14, lineHeight: 21 },
-  onboardingPreview: { flexDirection: "row", alignItems: "flex-start", gap: 10, backgroundColor: "#EAF8D0", borderRadius: 15, padding: 13, marginTop: 2 },
-  onboardingPreviewText: { flex: 1, color: "#58721B", fontSize: 10, lineHeight: 15, fontWeight: "700" },
+  onboardingGoalInput: { minHeight: 150, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.line, borderRadius: 20, padding: 16, color: COLORS.ink, fontSize: 14, lineHeight: 21 },
+  onboardingPreview: { flexDirection: "row", alignItems: "flex-start", gap: 10, backgroundColor: COLORS.successSurface, borderRadius: 15, padding: 13, marginTop: 2 },
+  onboardingPreviewText: { flex: 1, color: COLORS.success, fontSize: 10, lineHeight: 15, fontWeight: "700" },
   onboardingReady: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: COLORS.lime, borderRadius: 18, padding: 14, marginTop: 16 },
-  onboardingReadyFace: { width: 38, height: 38, borderRadius: 13, backgroundColor: COLORS.ink, alignItems: "center", justifyContent: "center", transform: [{ rotate: "-4deg" }] },
+  onboardingReadyFace: { width: 38, height: 38, borderRadius: 13, backgroundColor: COLORS.mark, alignItems: "center", justifyContent: "center", transform: [{ rotate: "-4deg" }] },
   onboardingReadyFaceText: { color: COLORS.lime, fontSize: 24, fontWeight: "900", marginTop: -6 },
   onboardingReadyText: { flex: 1, color: "#3D3A2C", fontSize: 10, lineHeight: 15, fontWeight: "800" },
-  onboardingFooter: { minHeight: 82, paddingHorizontal: 22, paddingTop: 12, paddingBottom: 14, borderTopWidth: 1, borderTopColor: "#E6DFEE", backgroundColor: "rgba(246,242,255,0.97)", flexDirection: "row", alignItems: "center", gap: 12 },
+  onboardingFooter: { minHeight: 82, paddingHorizontal: 22, paddingTop: 12, paddingBottom: 14, borderTopWidth: 1, borderTopColor: COLORS.line, backgroundColor: COLORS.paper, flexDirection: "row", alignItems: "center", gap: 12 },
   onboardingBack: { height: 52, minWidth: 90, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7 },
   onboardingBackText: { color: COLORS.grape, fontSize: 12, fontWeight: "900" },
   onboardingBackPlaceholder: { width: 90 },
   onboardingNext: { flex: 1, height: 54, borderRadius: 17, backgroundColor: COLORS.grape, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 9, shadowColor: COLORS.grapeDark, shadowOpacity: 0.2, shadowRadius: 12, shadowOffset: { width: 0, height: 7 }, elevation: 5 },
   onboardingNextText: { color: "#FFFFFF", fontSize: 13, fontWeight: "900" },
-  authSafe: { flex: 1, backgroundColor: "#F3EEFF" },
+  authSafe: { flex: 1, backgroundColor: COLORS.paper },
   authKeyboard: { flex: 1 },
   authScroll: { flexGrow: 1, justifyContent: "center", padding: 24, maxWidth: 480, width: "100%", alignSelf: "center" },
   authBrandRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 30 },
@@ -2235,21 +2237,21 @@ const createStyleDefinition = () => ({
   authBrand: { color: COLORS.ink, fontSize: 29, fontWeight: "900", letterSpacing: -1.5 },
   authTitle: { color: COLORS.ink, fontSize: 31, lineHeight: 36, fontWeight: "900", letterSpacing: -1.2 },
   authSubtitle: { color: COLORS.muted, fontSize: 13, lineHeight: 19, marginTop: 9, marginBottom: 22 },
-  authCard: { backgroundColor: COLORS.white, borderRadius: 25, padding: 20, borderWidth: 1, borderColor: COLORS.line, shadowColor: COLORS.grapeDark, shadowOpacity: 0.1, shadowRadius: 22, shadowOffset: { width: 0, height: 10 }, elevation: 6 },
-  authError: { color: "#B54337", backgroundColor: "#FFF0ED", borderRadius: 12, padding: 11, fontSize: 11, lineHeight: 16 },
-  authSuccess: { color: "#58721B", backgroundColor: "#F0F9D9", borderRadius: 12, padding: 11, fontSize: 11, lineHeight: 16 },
+  authCard: { backgroundColor: COLORS.surface, borderRadius: 25, padding: 20, borderWidth: 1, borderColor: COLORS.line, shadowColor: COLORS.grapeDark, shadowOpacity: 0.1, shadowRadius: 22, shadowOffset: { width: 0, height: 10 }, elevation: 6 },
+  authError: { color: COLORS.danger, backgroundColor: COLORS.dangerSurface, borderRadius: 12, padding: 11, fontSize: 11, lineHeight: 16 },
+  authSuccess: { color: COLORS.success, backgroundColor: COLORS.successSurface, borderRadius: 12, padding: 11, fontSize: 11, lineHeight: 16 },
   authSwitch: { alignItems: "center", paddingTop: 18, paddingBottom: 4 },
   authSwitchText: { color: COLORS.grape, fontSize: 11, fontWeight: "900" },
   authPrivacy: { color: COLORS.muted, fontSize: 10, textAlign: "center", marginTop: 18 },
   loadingScreen: { flex: 1, alignItems: "center", justifyContent: "center", gap: 18 },
   loadingText: { color: COLORS.muted, fontSize: 12, fontWeight: "700" },
   setupScreen: { flex: 1, justifyContent: "center", padding: 28, maxWidth: 480, width: "100%", alignSelf: "center" },
-  setupCode: { backgroundColor: COLORS.ink, borderRadius: 16, padding: 16, gap: 8 },
+  setupCode: { backgroundColor: COLORS.mark, borderRadius: 16, padding: 16, gap: 8 },
   setupCodeText: { color: COLORS.lime, fontSize: 11, fontWeight: "800" },
   app: { flex: 1, backgroundColor: COLORS.paper, maxWidth: 620, width: "100%", alignSelf: "center" },
   topbar: { height: 64, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20 },
-  cloudError: { marginHorizontal: 20, marginBottom: 8, borderRadius: 13, backgroundColor: "#FFF0ED", padding: 10, flexDirection: "row", alignItems: "center", gap: 8 },
-  cloudErrorText: { flex: 1, color: "#B54337", fontSize: 10, lineHeight: 14, fontWeight: "700" },
+  cloudError: { marginHorizontal: 20, marginBottom: 8, borderRadius: 13, backgroundColor: COLORS.dangerSurface, padding: 10, flexDirection: "row", alignItems: "center", gap: 8 },
+  cloudErrorText: { flex: 1, color: COLORS.danger, fontSize: 10, lineHeight: 14, fontWeight: "700" },
   brandRow: { flexDirection: "row", alignItems: "center", gap: 9 },
   brandMark: { width: 30, height: 30, borderRadius: 10, backgroundColor: COLORS.grape, alignItems: "center", justifyContent: "center", transform: [{ rotate: "-5deg" }] },
   brandFace: { color: "white", fontSize: 22, fontWeight: "900", marginTop: -5 },
@@ -2261,19 +2263,19 @@ const createStyleDefinition = () => ({
   eyebrow: { color: COLORS.muted, fontSize: 10, fontWeight: "800", letterSpacing: 1.4, marginBottom: 5 },
   h1: { color: COLORS.ink, fontSize: 30, lineHeight: 35, fontWeight: "900", letterSpacing: -1.2 },
   moodPill: { maxWidth: 145, minHeight: 32, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: COLORS.sky, paddingVertical: 7, paddingHorizontal: 11, borderRadius: 20, marginBottom: 3 },
-  moodText: { flexShrink: 1, fontSize: 10, lineHeight: 13, fontWeight: "800", color: "#277493", textAlign: "center" },
+  moodText: { flexShrink: 1, fontSize: 10, lineHeight: 13, fontWeight: "800", color: COLORS.info, textAlign: "center" },
   moodActions: { flexDirection: "row", alignItems: "center", gap: 6 },
-  aiRefreshButton: { width: 34, height: 34, borderRadius: 13, backgroundColor: "#EEE8FF", borderWidth: 1, borderColor: "#D9CDF8", alignItems: "center", justifyContent: "center", marginBottom: 3 },
-  moodAttention: { backgroundColor: "#FFF0CA" },
-  moodAttentionText: { color: "#9A6810" },
-  moodDanger: { backgroundColor: "#FFE0DC" },
-  moodDangerText: { color: "#B54337" },
+  aiRefreshButton: { width: 34, height: 34, borderRadius: 13, backgroundColor: COLORS.accentSurface, borderWidth: 1, borderColor: COLORS.accentBorder, alignItems: "center", justifyContent: "center", marginBottom: 3 },
+  moodAttention: { backgroundColor: COLORS.warningSurface },
+  moodAttentionText: { color: COLORS.warning },
+  moodDanger: { backgroundColor: COLORS.dangerSurface },
+  moodDangerText: { color: COLORS.danger },
   balanceCard: { minHeight: 245, borderRadius: 28, padding: 24, overflow: "hidden", shadowColor: COLORS.grapeDark, shadowOpacity: 0.22, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 9 },
   balanceGlow: { position: "absolute", width: 190, height: 190, borderRadius: 95, backgroundColor: "rgba(201,244,90,0.15)", top: -85, right: -45 },
   balanceHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   balanceLabel: { color: "rgba(255,255,255,0.78)", fontSize: 13, fontWeight: "700" },
   balanceAiBadge: { minHeight: 25, borderRadius: 13, paddingHorizontal: 9, flexDirection: "row", alignItems: "center", gap: 5 },
-  balanceAiBadgeText: { color: "#242033", fontSize: 8, fontWeight: "900", letterSpacing: 0.5 },
+  balanceAiBadgeText: { color: COLORS.mark, fontSize: 8, fontWeight: "900", letterSpacing: 0.5 },
   balanceValue: { color: "white", fontSize: 39, fontWeight: "900", letterSpacing: -1.8, marginTop: 7 },
   savedTotalLine: { alignSelf: "flex-start", minHeight: 30, borderRadius: 13, paddingHorizontal: 10, marginTop: 9, backgroundColor: "rgba(20,13,45,0.28)", flexDirection: "row", alignItems: "center", gap: 6 },
   savedTotalLabel: { color: "rgba(255,255,255,0.76)", fontSize: 10, fontWeight: "700" },
@@ -2286,26 +2288,26 @@ const createStyleDefinition = () => ({
   whiteButtonText: { color: "#532CB8", fontWeight: "800", fontSize: 13 },
   metricsRow: { flexDirection: "row", gap: 12, marginTop: 14 },
   metricCard: { flex: 1, padding: 16, borderRadius: 20 },
-  metricIncomeCard: { backgroundColor: COLORS.paper === DARK_COLORS.paper ? "#17251A" : "#EAF8D0", borderWidth: 1, borderColor: COLORS.paper === DARK_COLORS.paper ? "#35502E" : "#D6E9AD" },
-  metricExpenseCard: { backgroundColor: COLORS.paper === DARK_COLORS.paper ? "#2B1A1E" : "#FFF0ED", borderWidth: 1, borderColor: COLORS.paper === DARK_COLORS.paper ? "#563038" : "#F5D2CD" },
-  metricIncomeLabel: { color: COLORS.paper === DARK_COLORS.paper ? "#AFC49B" : "#58721B" },
-  metricExpenseLabel: { color: COLORS.paper === DARK_COLORS.paper ? "#D6AAA5" : "#B65A4F" },
-  metricIncomeValue: { color: COLORS.paper === DARK_COLORS.paper ? "#F4F0FA" : "#242033" },
-  metricExpenseValue: { color: COLORS.paper === DARK_COLORS.paper ? "#F4F0FA" : "#242033" },
+  metricIncomeCard: { backgroundColor: COLORS.successSurface, borderWidth: 1, borderColor: COLORS.successBorder },
+  metricExpenseCard: { backgroundColor: COLORS.dangerSurface, borderWidth: 1, borderColor: COLORS.dangerBorder },
+  metricIncomeLabel: { color: COLORS.success },
+  metricExpenseLabel: { color: COLORS.danger },
+  metricIncomeValue: { color: COLORS.ink },
+  metricExpenseValue: { color: COLORS.ink },
   iconBubble: { width: 30, height: 30, borderRadius: 11, justifyContent: "center", alignItems: "center", marginBottom: 13 },
   metricLabel: { color: COLORS.muted, fontSize: 11, fontWeight: "700" },
   metricValue: { color: COLORS.ink, fontSize: 17, fontWeight: "900", marginTop: 4, letterSpacing: -0.5 },
-  commitmentCard: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#F0F9D9", borderRadius: 18, padding: 14, marginTop: 12 },
-  commitmentHint: { color: "#71804A", fontSize: 9, marginTop: 3 },
-  aiInsightCard: { minHeight: 154, borderRadius: 22, padding: 17, marginTop: 14, backgroundColor: "#F0EBFF", borderWidth: 1, borderColor: "#D9CDF8" },
-  aiInsightAttention: { backgroundColor: "#FFF5D9", borderColor: "#EED9A3" },
-  aiInsightDanger: { backgroundColor: "#FFF0ED", borderColor: "#F1C9C3" },
+  commitmentCard: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: COLORS.successSurface, borderRadius: 18, padding: 14, marginTop: 12 },
+  commitmentHint: { color: COLORS.success, fontSize: 9, marginTop: 3 },
+  aiInsightCard: { minHeight: 154, borderRadius: 22, padding: 17, marginTop: 14, backgroundColor: COLORS.accentSurface, borderWidth: 1, borderColor: COLORS.accentBorder },
+  aiInsightAttention: { backgroundColor: COLORS.warningSurface, borderColor: COLORS.warningBorder },
+  aiInsightDanger: { backgroundColor: COLORS.dangerSurface, borderColor: COLORS.dangerBorder },
   aiInsightHeader: { flexDirection: "row", alignItems: "center", gap: 9 },
   aiInsightIcon: { width: 38, height: 38, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: COLORS.grape },
-  aiInsightIconAttention: { backgroundColor: "#B27A16" },
-  aiInsightIconDanger: { backgroundColor: "#B54337" },
+  aiInsightIconAttention: { backgroundColor: COLORS.warning },
+  aiInsightIconDanger: { backgroundColor: COLORS.danger },
   aiInsightEyebrow: { flex: 1, color: COLORS.grape, fontSize: 8, fontWeight: "900", letterSpacing: 0.9 },
-  aiInsightAction: { minHeight: 31, borderRadius: 12, paddingHorizontal: 10, backgroundColor: COLORS.white, flexDirection: "row", alignItems: "center", gap: 5 },
+  aiInsightAction: { minHeight: 31, borderRadius: 12, paddingHorizontal: 10, backgroundColor: COLORS.surface, flexDirection: "row", alignItems: "center", gap: 5 },
   aiInsightActionText: { color: COLORS.grape, fontSize: 9, fontWeight: "900" },
   aiInsightTitle: { color: COLORS.ink, fontSize: 17, lineHeight: 21, fontWeight: "900", letterSpacing: -0.35, marginTop: 14 },
   aiInsightText: { color: COLORS.muted, fontSize: 10, lineHeight: 16, marginTop: 5, maxWidth: 430 },
@@ -2313,8 +2315,8 @@ const createStyleDefinition = () => ({
   sectionTitleText: { color: COLORS.ink, fontSize: 16, fontWeight: "900", letterSpacing: -0.3 },
   sectionAction: { color: COLORS.grape, fontSize: 12, fontWeight: "800" },
   pressed: { transform: [{ scale: 0.97 }], opacity: 0.85 },
-  lifeFeatureCard: { minHeight: 76, backgroundColor: "#EEE8FF", borderRadius: 19, padding: 14, marginTop: 10, flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: "#D9CDF8" },
-  lifeFeatureIcon: { width: 43, height: 43, borderRadius: 14, backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center" },
+  lifeFeatureCard: { minHeight: 76, backgroundColor: COLORS.accentSurface, borderRadius: 19, padding: 14, marginTop: 10, flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: COLORS.accentBorder },
+  lifeFeatureIcon: { width: 43, height: 43, borderRadius: 14, backgroundColor: COLORS.surface, alignItems: "center", justifyContent: "center" },
   lifeFeatureEyebrow: { color: COLORS.grape, fontSize: 8, fontWeight: "900", letterSpacing: 0.7 },
   lifeFeatureTitle: { color: COLORS.ink, fontSize: 13, lineHeight: 17, fontWeight: "900", marginTop: 3 },
   toolsIntro: { color: COLORS.muted, fontSize: 12, lineHeight: 18, marginTop: -10, marginBottom: 18, maxWidth: 440 },
@@ -2322,7 +2324,7 @@ const createStyleDefinition = () => ({
   toolFeaturedTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   toolFeaturedIcon: { width: 52, height: 52, borderRadius: 18, backgroundColor: COLORS.grape, alignItems: "center", justifyContent: "center", transform: [{ rotate: "-5deg" }] },
   toolAvailableBadge: { minHeight: 25, borderRadius: 12, paddingHorizontal: 9, backgroundColor: COLORS.lime, alignItems: "center", justifyContent: "center" },
-  toolAvailableText: { color: "#242033", fontSize: 7, fontWeight: "900", letterSpacing: 0.7 },
+  toolAvailableText: { color: COLORS.mark, fontSize: 7, fontWeight: "900", letterSpacing: 0.7 },
   toolFeaturedEyebrow: { color: COLORS.lime, fontSize: 8, fontWeight: "900", letterSpacing: 0.9, marginTop: 28 },
   toolFeaturedTitle: { color: "#FFFFFF", fontSize: 23, lineHeight: 27, fontWeight: "900", letterSpacing: -0.7, marginTop: 7, maxWidth: 360 },
   toolFeaturedText: { color: "#CEC7DD", fontSize: 11, lineHeight: 17, marginTop: 8, maxWidth: 390 },
@@ -2330,12 +2332,12 @@ const createStyleDefinition = () => ({
   toolOpenText: { color: COLORS.lime, fontSize: 11, fontWeight: "900" },
   toolsComingTitle: { color: COLORS.ink, fontSize: 15, fontWeight: "900", marginTop: 27, marginBottom: 11 },
   toolsComingGrid: { flexDirection: "row", gap: 10 },
-  toolComingCard: { flex: 1, minHeight: 160, borderRadius: 19, padding: 14, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.line },
-  toolComingIcon: { width: 38, height: 38, borderRadius: 13, backgroundColor: "#F0EBFF", alignItems: "center", justifyContent: "center" },
+  toolComingCard: { flex: 1, minHeight: 160, borderRadius: 19, padding: 14, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.line },
+  toolComingIcon: { width: 38, height: 38, borderRadius: 13, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center" },
   toolComingName: { color: COLORS.ink, fontSize: 12, fontWeight: "900", marginTop: 13 },
   toolComingText: { color: COLORS.muted, fontSize: 9, lineHeight: 13, marginTop: 4 },
   toolComingBadge: { color: COLORS.grape, fontSize: 7, fontWeight: "900", letterSpacing: 0.7, marginTop: 12 },
-  listCard: { backgroundColor: COLORS.white, borderRadius: 20, paddingHorizontal: 15, borderWidth: 1, borderColor: COLORS.line },
+  listCard: { backgroundColor: COLORS.surface, borderRadius: 20, paddingHorizontal: 15, borderWidth: 1, borderColor: COLORS.line },
   entryRow: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 12 },
   entryBorder: { borderBottomWidth: 1, borderBottomColor: COLORS.line },
   entryIcon: { width: 42, height: 42, borderRadius: 14, borderWidth: 1, alignItems: "center", justifyContent: "center" },
@@ -2350,67 +2352,67 @@ const createStyleDefinition = () => ({
   entryWalletDot: { width: 6, height: 6, borderRadius: 3 },
   entryWalletText: { color: COLORS.muted, fontSize: 9, fontWeight: "700" },
   rowValue: { color: COLORS.ink, fontSize: 12, fontWeight: "900" },
-  editEntryButton: { width: 32, height: 32, borderRadius: 11, backgroundColor: "#F0EBFF", alignItems: "center", justifyContent: "center" },
-  income: { color: "#65861E" },
+  editEntryButton: { width: 32, height: 32, borderRadius: 11, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center" },
+  income: { color: COLORS.success },
   tipCard: { flexDirection: "row", gap: 13, backgroundColor: COLORS.lime, borderRadius: 20, padding: 16, marginTop: 18, alignItems: "center" },
-  tipMascot: { width: 48, height: 48, borderRadius: 17, backgroundColor: COLORS.ink, alignItems: "center", justifyContent: "center", transform: [{ rotate: "-4deg" }] },
+  tipMascot: { width: 48, height: 48, borderRadius: 17, backgroundColor: COLORS.mark, alignItems: "center", justifyContent: "center", transform: [{ rotate: "-4deg" }] },
   tipFace: { color: COLORS.lime, fontSize: 14, fontWeight: "900" },
   tipCopy: { flex: 1 },
-  tipTitle: { color: COLORS.ink, fontWeight: "900", fontSize: 13 },
+  tipTitle: { color: COLORS.mark, fontWeight: "900", fontSize: 13 },
   tipText: { color: "#45402E", fontSize: 11, lineHeight: 16, marginTop: 3 },
-  nav: { position: "absolute", left: 12, right: 12, bottom: 10, height: 72, backgroundColor: COLORS.white, flexDirection: "row", borderRadius: 24, borderWidth: 1, borderColor: COLORS.line, shadowColor: COLORS.ink, shadowOpacity: 0.09, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 8 },
+  nav: { position: "absolute", left: 12, right: 12, bottom: 10, height: 72, backgroundColor: COLORS.surface, flexDirection: "row", borderRadius: 24, borderWidth: 1, borderColor: COLORS.line, shadowColor: COLORS.ink, shadowOpacity: 0.09, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 8 },
   navItem: { flex: 1, alignItems: "center", justifyContent: "center", gap: 4 },
-  navLabel: { color: "#AAA4B3", fontSize: 9, fontWeight: "700" },
+  navLabel: { color: COLORS.muted, fontSize: 9, fontWeight: "700" },
   navActive: { color: COLORS.grape, fontWeight: "900" },
   navDot: { position: "absolute", bottom: 5, width: 4, height: 4, borderRadius: 2, backgroundColor: COLORS.grape },
   pageHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 22 },
   smallButton: { flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: COLORS.grape, paddingHorizontal: 13, paddingVertical: 10, borderRadius: 13 },
   smallButtonText: { color: "white", fontSize: 11, fontWeight: "800" },
-  summaryStrip: { height: 50, backgroundColor: "#F0EBFF", borderRadius: 16, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
+  summaryStrip: { height: 50, backgroundColor: COLORS.accentSurface, borderRadius: 16, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
   summaryText: { color: COLORS.grapeDark, fontSize: 12, fontWeight: "800" },
   clearFilter: { flexDirection: "row", alignItems: "center", gap: 3 },
   clearFilterText: { color: COLORS.grape, fontSize: 11, fontWeight: "900" },
   filterLabel: { color: COLORS.muted, fontSize: 9, fontWeight: "900", letterSpacing: 1.2, marginBottom: 7 },
   filterRow: { flexDirection: "row", gap: 8, marginBottom: 16 },
   filterScroll: { gap: 8, paddingBottom: 18 },
-  filterChip: { minHeight: 37, paddingHorizontal: 13, borderRadius: 18, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.line, flexDirection: "row", alignItems: "center", gap: 7 },
+  filterChip: { minHeight: 37, paddingHorizontal: 13, borderRadius: 18, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.line, flexDirection: "row", alignItems: "center", gap: 7 },
   filterChipActive: { backgroundColor: COLORS.grape, borderColor: COLORS.grape },
   filterChipText: { color: COLORS.muted, fontSize: 11, fontWeight: "800" },
   filterChipTextActive: { color: "#FFFFFF" },
   filterDot: { width: 8, height: 8, borderRadius: 4 },
-  emptyState: { backgroundColor: COLORS.white, borderRadius: 20, padding: 28, alignItems: "center", borderWidth: 1, borderColor: COLORS.line },
-  emptyIcon: { width: 44, height: 44, borderRadius: 15, backgroundColor: "#F0EBFF", alignItems: "center", justifyContent: "center", marginBottom: 12 },
+  emptyState: { backgroundColor: COLORS.surface, borderRadius: 20, padding: 28, alignItems: "center", borderWidth: 1, borderColor: COLORS.line },
+  emptyIcon: { width: 44, height: 44, borderRadius: 15, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center", marginBottom: 12 },
   emptyTitle: { color: COLORS.ink, fontSize: 15, fontWeight: "900" },
   emptyText: { color: COLORS.muted, fontSize: 11, marginTop: 5 },
   recurringHero: { backgroundColor: COLORS.sky, borderRadius: 23, padding: 20, marginBottom: 16 },
-  recurringHeroLabel: { color: "#36758C", fontSize: 11, fontWeight: "800" },
+  recurringHeroLabel: { color: COLORS.info, fontSize: 11, fontWeight: "800" },
   recurringHeroValue: { color: COLORS.ink, fontSize: 29, fontWeight: "900", letterSpacing: -1, marginVertical: 5 },
-  recurringHeroCopy: { color: "#4D7481", fontSize: 11 },
-  monthPicker: { height: 66, backgroundColor: COLORS.white, borderRadius: 18, borderWidth: 1, borderColor: COLORS.line, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 9, marginBottom: 4 },
-  monthArrow: { width: 42, height: 42, borderRadius: 14, backgroundColor: "#F0EBFF", alignItems: "center", justifyContent: "center" },
+  recurringHeroCopy: { color: COLORS.ink, fontSize: 11 },
+  monthPicker: { height: 66, backgroundColor: COLORS.surface, borderRadius: 18, borderWidth: 1, borderColor: COLORS.line, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 9, marginBottom: 4 },
+  monthArrow: { width: 42, height: 42, borderRadius: 14, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center" },
   monthCenter: { alignItems: "center" },
   monthCaption: { color: COLORS.muted, fontSize: 8, fontWeight: "900", letterSpacing: 1.1 },
   monthLabel: { color: COLORS.ink, fontSize: 15, fontWeight: "900", textTransform: "capitalize", marginTop: 3 },
-  recurringRow: { backgroundColor: COLORS.white, borderRadius: 18, marginBottom: 10, padding: 13, flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: COLORS.line },
-  editRecurringButton: { width: 34, height: 34, borderRadius: 11, backgroundColor: "#F0EBFF", alignItems: "center", justifyContent: "center" },
+  recurringRow: { backgroundColor: COLORS.surface, borderRadius: 18, marginBottom: 10, padding: 13, flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: COLORS.line },
+  editRecurringButton: { width: 34, height: 34, borderRadius: 11, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center" },
   toggleRecurringButton: { width: 30, height: 34, alignItems: "center", justifyContent: "center" },
-  emptySectionText: { color: COLORS.muted, fontSize: 11, backgroundColor: COLORS.white, borderRadius: 16, padding: 16, borderWidth: 1, borderColor: COLORS.line },
-  billCard: { backgroundColor: COLORS.white, borderRadius: 18, marginBottom: 10, borderWidth: 1, borderColor: COLORS.line, overflow: "hidden" },
+  emptySectionText: { color: COLORS.muted, fontSize: 11, backgroundColor: COLORS.surface, borderRadius: 16, padding: 16, borderWidth: 1, borderColor: COLORS.line },
+  billCard: { backgroundColor: COLORS.surface, borderRadius: 18, marginBottom: 10, borderWidth: 1, borderColor: COLORS.line, overflow: "hidden" },
   billMain: { padding: 13, flexDirection: "row", alignItems: "center", gap: 12 },
   billFooter: { borderTopWidth: 1, borderTopColor: COLORS.line, minHeight: 52, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   billActions: { flexDirection: "row", alignItems: "center", gap: 7 },
   billValue: { color: COLORS.ink, fontSize: 15, fontWeight: "900" },
-  paidBadge: { backgroundColor: "#EAF8D0", borderRadius: 12, paddingHorizontal: 9, paddingVertical: 6 },
-  pendingBadge: { backgroundColor: "#FFF0ED", borderRadius: 12, paddingHorizontal: 9, paddingVertical: 6 },
-  paidBadgeText: { color: "#66851D", fontSize: 9, fontWeight: "900" },
-  pendingBadgeText: { color: "#C95043", fontSize: 9, fontWeight: "900" },
+  paidBadge: { backgroundColor: COLORS.successSurface, borderRadius: 12, paddingHorizontal: 9, paddingVertical: 6 },
+  pendingBadge: { backgroundColor: COLORS.dangerSurface, borderRadius: 12, paddingHorizontal: 9, paddingVertical: 6 },
+  paidBadgeText: { color: COLORS.success, fontSize: 9, fontWeight: "900" },
+  pendingBadgeText: { color: COLORS.danger, fontSize: 9, fontWeight: "900" },
   payButton: { backgroundColor: COLORS.grape, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9, flexDirection: "row", alignItems: "center", gap: 5 },
   payButtonText: { color: "#FFFFFF", fontSize: 10, fontWeight: "900" },
-  pauseButton: { backgroundColor: "#F0EBFF", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 9, flexDirection: "row", alignItems: "center", gap: 5 },
+  pauseButton: { backgroundColor: COLORS.accentSurface, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 9, flexDirection: "row", alignItems: "center", gap: 5 },
   pauseButtonText: { color: COLORS.grape, fontSize: 10, fontWeight: "900" },
   disabledRow: { opacity: 0.48 },
-  dateBadge: { width: 45, height: 48, borderRadius: 13, backgroundColor: "#F0EBFF", alignItems: "center", justifyContent: "center" },
-  incomeDateBadge: { backgroundColor: "#EAF8D0" },
+  dateBadge: { width: 45, height: 48, borderRadius: 13, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center" },
+  incomeDateBadge: { backgroundColor: COLORS.successSurface },
   dateSmall: { color: COLORS.grape, fontSize: 8, fontWeight: "900" },
   dateBig: { color: COLORS.grapeDark, fontSize: 18, fontWeight: "900" },
   walletCard: { minHeight: 162, borderRadius: 25, padding: 20, marginBottom: 14, shadowColor: COLORS.ink, shadowOpacity: 0.1, shadowRadius: 12, shadowOffset: { width: 0, height: 7 }, elevation: 4 },
@@ -2419,7 +2421,7 @@ const createStyleDefinition = () => ({
   walletDots: { color: "rgba(255,255,255,0.7)", letterSpacing: 2 },
   walletName: { color: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: "700", marginTop: 29 },
   walletBalance: { color: "white", fontSize: 26, fontWeight: "900", marginTop: 4, letterSpacing: -0.8 },
-  dashedButton: { height: 58, borderWidth: 1.5, borderStyle: "dashed", borderColor: "#B9A8EC", borderRadius: 18, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 },
+  dashedButton: { height: 58, borderWidth: 1.5, borderStyle: "dashed", borderColor: COLORS.accentBorder, borderRadius: 18, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 },
   dashedText: { color: COLORS.grape, fontSize: 12, fontWeight: "800" },
   dreamWalletPressable: { borderRadius: 27, marginTop: 24, shadowColor: "#33245E", shadowOpacity: 0.2, shadowRadius: 18, shadowOffset: { width: 0, height: 10 }, elevation: 7 },
   dreamWalletCard: { borderRadius: 27, padding: 20, overflow: "hidden" },
@@ -2432,15 +2434,15 @@ const createStyleDefinition = () => ({
   dreamWalletCopy: { color: "#DCD3EF", fontSize: 10, lineHeight: 15, marginTop: 6 },
   dreamWalletOpen: { minHeight: 36, marginTop: 15, paddingTop: 12, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.13)", flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   dreamWalletOpenText: { color: COLORS.lime, fontSize: 10, fontWeight: "900" },
-  potCard: { backgroundColor: COLORS.white, borderRadius: 23, padding: 18, marginBottom: 14, borderWidth: 1, borderColor: COLORS.line },
+  potCard: { backgroundColor: COLORS.surface, borderRadius: 23, padding: 18, marginBottom: 14, borderWidth: 1, borderColor: COLORS.line },
   potTop: { flexDirection: "row", alignItems: "center", gap: 12 },
-  potIcon: { width: 46, height: 46, borderRadius: 16, backgroundColor: "#F0EBFF", alignItems: "center", justifyContent: "center" },
+  potIcon: { width: 46, height: 46, borderRadius: 16, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center" },
   potName: { color: COLORS.ink, fontSize: 16, fontWeight: "900" },
   potDescription: { color: COLORS.muted, fontSize: 10, lineHeight: 14, marginTop: 3 },
   potTopActions: { alignItems: "flex-end", gap: 7 },
   potPercent: { color: COLORS.grape, fontSize: 16, fontWeight: "900" },
-  potDeleteIcon: { width: 31, height: 31, borderRadius: 11, borderWidth: 1, borderColor: "#F0BEB8", backgroundColor: "#FFF7F5", alignItems: "center", justifyContent: "center" },
-  potProgressTrack: { height: 10, backgroundColor: "#EDE9F2", borderRadius: 5, overflow: "hidden", marginTop: 18 },
+  potDeleteIcon: { width: 31, height: 31, borderRadius: 11, borderWidth: 1, borderColor: COLORS.dangerBorder, backgroundColor: COLORS.dangerSurface, alignItems: "center", justifyContent: "center" },
+  potProgressTrack: { height: 10, backgroundColor: COLORS.surfaceMuted, borderRadius: 5, overflow: "hidden", marginTop: 18 },
   potProgressFill: { height: "100%", backgroundColor: COLORS.lime, borderRadius: 5 },
   potValues: { flexDirection: "row", justifyContent: "space-between", marginTop: 14 },
   potValueLabel: { color: COLORS.muted, fontSize: 8, fontWeight: "900", letterSpacing: 1 },
@@ -2448,156 +2450,156 @@ const createStyleDefinition = () => ({
   potGoalBlock: { alignItems: "flex-end" },
   potGoal: { color: COLORS.muted, fontSize: 15, fontWeight: "800", marginTop: 5 },
   potPlan: { color: COLORS.muted, fontSize: 10, marginTop: 8 },
-  potYieldBadge: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#E4F7F3", borderRadius: 11, paddingHorizontal: 9, paddingVertical: 7, marginTop: 9 },
-  potYieldText: { color: "#167B6B", fontSize: 9, fontWeight: "800" },
+  potYieldBadge: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: COLORS.tealSurface, borderRadius: 11, paddingHorizontal: 9, paddingVertical: 7, marginTop: 9 },
+  potYieldText: { color: COLORS.teal, fontSize: 9, fontWeight: "800" },
   potSourceLine: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 9 },
   potSourceText: { flex: 1, color: COLORS.muted, fontSize: 9, fontWeight: "700" },
   potDepositButton: { height: 45, backgroundColor: COLORS.grape, borderRadius: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, marginTop: 16 },
   potDepositButtonText: { color: "#FFFFFF", fontSize: 12, fontWeight: "900" },
-  potComplete: { minHeight: 45, backgroundColor: "#EAF8D0", borderRadius: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, marginTop: 16 },
-  potCompleteText: { color: "#66851D", fontSize: 11, fontWeight: "900" },
+  potComplete: { minHeight: 45, backgroundColor: COLORS.successSurface, borderRadius: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, marginTop: 16 },
+  potCompleteText: { color: COLORS.success, fontSize: 11, fontWeight: "900" },
   emptyPotButton: { backgroundColor: COLORS.grape, borderRadius: 13, paddingHorizontal: 16, paddingVertical: 11, marginTop: 16 },
   emptyPotButtonText: { color: "#FFFFFF", fontSize: 11, fontWeight: "900" },
   modalWrap: { flex: 1, justifyContent: "flex-end" },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(28,22,43,0.45)" },
   sheet: { maxHeight: "91%", backgroundColor: COLORS.paper, borderTopLeftRadius: 30, borderTopRightRadius: 30, paddingHorizontal: 20, paddingBottom: 28 },
   sheetContent: { paddingBottom: 24 },
-  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: "#D3CEDA", alignSelf: "center", marginTop: 10, marginBottom: 18 },
+  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.lineStrong, alignSelf: "center", marginTop: 10, marginBottom: 18 },
   sheetHeader: { flexDirection: "row", gap: 14, alignItems: "flex-start", marginBottom: 20 },
   sheetTitle: { color: COLORS.ink, fontSize: 24, fontWeight: "900", letterSpacing: -0.8 },
   sheetSubtitle: { color: COLORS.muted, fontSize: 11, marginTop: 4 },
-  close: { width: 35, height: 35, borderRadius: 12, backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: COLORS.line },
+  close: { width: 35, height: 35, borderRadius: 12, backgroundColor: COLORS.surface, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: COLORS.line },
   field: { marginBottom: 16 },
   fieldLabel: { color: COLORS.ink, fontSize: 11, fontWeight: "800", marginBottom: 7 },
-  input: { height: 52, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.line, borderRadius: 15, paddingHorizontal: 15, color: COLORS.ink, fontSize: 14, fontWeight: "600" },
-  potDescriptionInput: { minHeight: 88, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.line, borderRadius: 15, padding: 14, color: COLORS.ink, fontSize: 13, lineHeight: 18, marginBottom: 16 },
-  potPreview: { flexDirection: "row", alignItems: "center", gap: 9, backgroundColor: "#F0EBFF", borderRadius: 14, padding: 13, marginBottom: 16 },
+  input: { height: 52, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.line, borderRadius: 15, paddingHorizontal: 15, color: COLORS.ink, fontSize: 14, fontWeight: "600" },
+  potDescriptionInput: { minHeight: 88, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.line, borderRadius: 15, padding: 14, color: COLORS.ink, fontSize: 13, lineHeight: 18, marginBottom: 16 },
+  potPreview: { flexDirection: "row", alignItems: "center", gap: 9, backgroundColor: COLORS.accentSurface, borderRadius: 14, padding: 13, marginBottom: 16 },
   potPreviewText: { color: COLORS.grapeDark, fontSize: 11, fontWeight: "800" },
-  interestToggleCard: { flexDirection: "row", alignItems: "center", gap: 14, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.line, borderRadius: 17, padding: 14, marginBottom: 16 },
+  interestToggleCard: { flexDirection: "row", alignItems: "center", gap: 14, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.line, borderRadius: 17, padding: 14, marginBottom: 16 },
   interestToggleCopy: { flex: 1 },
   interestToggleTitle: { color: COLORS.ink, fontSize: 12, fontWeight: "900" },
   interestToggleHint: { color: COLORS.muted, fontSize: 9, lineHeight: 14, marginTop: 4 },
-  interestFields: { backgroundColor: "#F2FBF8", borderWidth: 1, borderColor: "#CBE9E1", borderRadius: 18, padding: 14, marginBottom: 16 },
-  realRateCard: { flexDirection: "row", alignItems: "flex-start", gap: 10, backgroundColor: "#E4F7F3", borderRadius: 14, padding: 12 },
-  realRateLabel: { color: "#167B6B", fontSize: 8, fontWeight: "900", letterSpacing: 0.7 },
-  realRateValue: { color: "#125F54", fontSize: 17, fontWeight: "900", marginTop: 3 },
-  realRateHint: { color: "#467970", fontSize: 8, lineHeight: 12, marginTop: 2 },
+  interestFields: { backgroundColor: COLORS.tealSurface, borderWidth: 1, borderColor: COLORS.tealBorder, borderRadius: 18, padding: 14, marginBottom: 16 },
+  realRateCard: { flexDirection: "row", alignItems: "flex-start", gap: 10, backgroundColor: COLORS.tealSurface, borderRadius: 14, padding: 12 },
+  realRateLabel: { color: COLORS.teal, fontSize: 8, fontWeight: "900", letterSpacing: 0.7 },
+  realRateValue: { color: COLORS.teal, fontSize: 17, fontWeight: "900", marginTop: 3 },
+  realRateHint: { color: COLORS.muted, fontSize: 8, lineHeight: 12, marginTop: 2 },
   quickDepositRow: { flexDirection: "row", gap: 8, marginBottom: 18 },
-  potTransferNote: { flexDirection: "row", alignItems: "center", gap: 11, backgroundColor: "#F0EBFF", borderRadius: 16, padding: 13, marginBottom: 18 },
+  potTransferNote: { flexDirection: "row", alignItems: "center", gap: 11, backgroundColor: COLORS.accentSurface, borderRadius: 16, padding: 13, marginBottom: 18 },
   potTransferNoteText: { flex: 1, color: COLORS.grapeDark, fontSize: 9, lineHeight: 14, fontWeight: "700" },
   potWalletOptions: { gap: 8, marginBottom: 20 },
-  potWalletOption: { minHeight: 58, borderRadius: 16, borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.white, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 10 },
-  potWalletOptionActive: { borderColor: COLORS.grape, backgroundColor: "#F7F4FF" },
+  potWalletOption: { minHeight: 58, borderRadius: 16, borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.surface, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 10 },
+  potWalletOptionActive: { borderColor: COLORS.grape, backgroundColor: COLORS.accentSurface },
   potWalletOptionUnavailable: { opacity: 0.45 },
   potWalletColor: { width: 35, height: 35, borderRadius: 12, alignItems: "center", justifyContent: "center" },
   potWalletName: { color: COLORS.ink, fontSize: 11, fontWeight: "900" },
   potWalletBalance: { color: COLORS.muted, fontSize: 9, marginTop: 3 },
   potWalletCheck: { width: 24, height: 24, borderRadius: 12, backgroundColor: COLORS.grape, alignItems: "center", justifyContent: "center" },
-  potInsufficientText: { color: "#B54337", backgroundColor: "#FFF0ED", borderRadius: 12, padding: 11, fontSize: 10, fontWeight: "700", marginBottom: 14 },
-  potTransferPreview: { borderRadius: 14, padding: 13, backgroundColor: "#EAF8D0", marginBottom: 14 },
-  potTransferPreviewLabel: { color: "#66851D", fontSize: 8, fontWeight: "900", letterSpacing: 0.8 },
-  potTransferPreviewText: { color: "#4E6715", fontSize: 10, lineHeight: 15, fontWeight: "700", marginTop: 4 },
-  quickDeposit: { flex: 1, height: 48, borderRadius: 14, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.line, alignItems: "center", justifyContent: "center" },
+  potInsufficientText: { color: COLORS.danger, backgroundColor: COLORS.dangerSurface, borderRadius: 12, padding: 11, fontSize: 10, fontWeight: "700", marginBottom: 14 },
+  potTransferPreview: { borderRadius: 14, padding: 13, backgroundColor: COLORS.successSurface, marginBottom: 14 },
+  potTransferPreviewLabel: { color: COLORS.success, fontSize: 8, fontWeight: "900", letterSpacing: 0.8 },
+  potTransferPreviewText: { color: COLORS.success, fontSize: 10, lineHeight: 15, fontWeight: "700", marginTop: 4 },
+  quickDeposit: { flex: 1, height: 48, borderRadius: 14, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.line, alignItems: "center", justifyContent: "center" },
   quickDepositActive: { backgroundColor: COLORS.grape, borderColor: COLORS.grape },
   quickDepositText: { color: COLORS.ink, fontSize: 12, fontWeight: "900" },
   quickDepositTextActive: { color: "#FFFFFF" },
-  potOverGoal: { color: "#66851D", backgroundColor: "#EAF8D0", fontSize: 10, lineHeight: 15, fontWeight: "700", borderRadius: 12, padding: 11, marginBottom: 14 },
-  potDeleteSummary: { minHeight: 86, borderRadius: 19, backgroundColor: "#F0EBFF", padding: 15, flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 14 },
-  potDeleteSummaryIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center" },
+  potOverGoal: { color: COLORS.success, backgroundColor: COLORS.successSurface, fontSize: 10, lineHeight: 15, fontWeight: "700", borderRadius: 12, padding: 11, marginBottom: 14 },
+  potDeleteSummary: { minHeight: 86, borderRadius: 19, backgroundColor: COLORS.accentSurface, padding: 15, flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 14 },
+  potDeleteSummaryIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: COLORS.surface, alignItems: "center", justifyContent: "center" },
   potDeleteSummaryLabel: { color: COLORS.grapeDark, fontSize: 8, fontWeight: "900", letterSpacing: 0.8 },
   potDeleteSummaryValue: { color: COLORS.ink, fontSize: 21, fontWeight: "900", marginTop: 2 },
   potDeleteSummaryText: { color: COLORS.muted, fontSize: 9, marginTop: 2 },
-  potDeleteReturnButton: { minHeight: 82, borderRadius: 18, borderWidth: 1, borderColor: "#D9CDF8", backgroundColor: COLORS.white, padding: 13, flexDirection: "row", alignItems: "center", gap: 11, marginBottom: 10 },
-  potDeleteChoiceIcon: { width: 40, height: 40, borderRadius: 14, backgroundColor: "#F0EBFF", alignItems: "center", justifyContent: "center" },
+  potDeleteReturnButton: { minHeight: 82, borderRadius: 18, borderWidth: 1, borderColor: COLORS.accentBorder, backgroundColor: COLORS.surface, padding: 13, flexDirection: "row", alignItems: "center", gap: 11, marginBottom: 10 },
+  potDeleteChoiceIcon: { width: 40, height: 40, borderRadius: 14, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center" },
   potDeleteReturnTitle: { color: COLORS.ink, fontSize: 12, fontWeight: "900" },
   potDeleteChoiceText: { color: COLORS.muted, fontSize: 9, lineHeight: 14, marginTop: 3 },
-  potDeleteDiscardButton: { minHeight: 82, borderRadius: 18, borderWidth: 1, borderColor: "#F0BEB8", backgroundColor: "#FFF7F5", padding: 13, flexDirection: "row", alignItems: "center", gap: 11 },
-  potDeleteDiscardIcon: { width: 40, height: 40, borderRadius: 14, backgroundColor: "#FFE5E0", alignItems: "center", justifyContent: "center" },
-  potDeleteDiscardTitle: { color: "#B54337", fontSize: 12, fontWeight: "900" },
-  potDeleteEmptyButton: { minHeight: 50, borderRadius: 15, backgroundColor: "#B54337", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  potDeleteDiscardButton: { minHeight: 82, borderRadius: 18, borderWidth: 1, borderColor: COLORS.dangerBorder, backgroundColor: COLORS.dangerSurface, padding: 13, flexDirection: "row", alignItems: "center", gap: 11 },
+  potDeleteDiscardIcon: { width: 40, height: 40, borderRadius: 14, backgroundColor: COLORS.dangerSurface, alignItems: "center", justifyContent: "center" },
+  potDeleteDiscardTitle: { color: COLORS.danger, fontSize: 12, fontWeight: "900" },
+  potDeleteEmptyButton: { minHeight: 50, borderRadius: 15, backgroundColor: COLORS.danger, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   potDeleteEmptyButtonText: { color: "#FFFFFF", fontSize: 11, fontWeight: "900" },
   potDeleteWarning: { color: COLORS.muted, fontSize: 9, textAlign: "center", marginTop: 12 },
-  deleteEntryButton: { height: 50, borderRadius: 15, borderWidth: 1, borderColor: "#F0BEB8", backgroundColor: "#FFF7F5", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 12 },
-  deleteEntryButtonText: { color: "#B54337", fontSize: 11, fontWeight: "900" },
-  deleteWalletButton: { height: 50, borderRadius: 15, borderWidth: 1, borderColor: "#F0BEB8", backgroundColor: "#FFF7F5", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 12 },
-  deleteWalletButtonText: { color: "#B54337", fontSize: 11, fontWeight: "900" },
+  deleteEntryButton: { height: 50, borderRadius: 15, borderWidth: 1, borderColor: COLORS.dangerBorder, backgroundColor: COLORS.dangerSurface, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 12 },
+  deleteEntryButtonText: { color: COLORS.danger, fontSize: 11, fontWeight: "900" },
+  deleteWalletButton: { height: 50, borderRadius: 15, borderWidth: 1, borderColor: COLORS.dangerBorder, backgroundColor: COLORS.dangerSurface, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 12 },
+  deleteWalletButtonText: { color: COLORS.danger, fontSize: 11, fontWeight: "900" },
   lifeSalaryCard: { backgroundColor: COLORS.sky, borderRadius: 19, padding: 17, marginBottom: 18 },
-  lifeSalaryLabel: { color: "#36758C", fontSize: 8, fontWeight: "900", letterSpacing: 0.8 },
+  lifeSalaryLabel: { color: COLORS.info, fontSize: 8, fontWeight: "900", letterSpacing: 0.8 },
   lifeSalaryValue: { color: COLORS.ink, fontSize: 25, fontWeight: "900", marginTop: 5 },
-  lifeSalaryHint: { color: "#4D7481", fontSize: 10, lineHeight: 14, marginTop: 4 },
+  lifeSalaryHint: { color: COLORS.ink, fontSize: 10, lineHeight: 14, marginTop: 4 },
   lifeHoursHint: { color: COLORS.muted, fontSize: 9, lineHeight: 14, marginTop: -8, marginBottom: 15 },
-  lifeResultCard: { backgroundColor: COLORS.ink, borderRadius: 20, padding: 18, marginTop: 16 },
+  lifeResultCard: { backgroundColor: COLORS.mark, borderRadius: 20, padding: 18, marginTop: 16 },
   lifeResultEyebrow: { color: COLORS.lime, fontSize: 9, fontWeight: "900", letterSpacing: 1 },
   lifeResultValue: { color: "#FFFFFF", fontSize: 25, fontWeight: "900", marginTop: 5 },
   lifeResultCopy: { color: "#D7D1E0", fontSize: 10, lineHeight: 15, marginTop: 5 },
-  lifeAiLoading: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "#F0EBFF", borderRadius: 15, padding: 14, marginTop: 12 },
+  lifeAiLoading: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: COLORS.accentSurface, borderRadius: 15, padding: 14, marginTop: 12 },
   lifeAiLoadingText: { flex: 1, color: COLORS.grapeDark, fontSize: 10, fontWeight: "700" },
-  lifeAiError: { color: "#C95043", backgroundColor: "#FFF0ED", borderRadius: 13, padding: 12, fontSize: 10, lineHeight: 15, marginTop: 12 },
-  lifeVerdict: { backgroundColor: COLORS.white, borderRadius: 18, borderWidth: 1.5, padding: 16, marginTop: 12 },
+  lifeAiError: { color: COLORS.danger, backgroundColor: COLORS.dangerSurface, borderRadius: 13, padding: 12, fontSize: 10, lineHeight: 15, marginTop: 12 },
+  lifeVerdict: { backgroundColor: COLORS.surface, borderRadius: 18, borderWidth: 1.5, padding: 16, marginTop: 12 },
   lifeVerdictBadge: { alignSelf: "flex-start", borderRadius: 12, paddingHorizontal: 9, paddingVertical: 6 },
   lifeVerdictBadgeText: { fontSize: 8, fontWeight: "900", letterSpacing: 0.6 },
   lifeVerdictTitle: { color: COLORS.ink, fontSize: 15, fontWeight: "900", marginTop: 11 },
   lifeVerdictText: { color: COLORS.muted, fontSize: 11, lineHeight: 17, marginTop: 5 },
   referenceDateRow: { flexDirection: "row", gap: 9, marginBottom: 8 },
-  dayField: { width: 66, height: 58, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.line, borderRadius: 15, alignItems: "center", justifyContent: "center" },
+  dayField: { width: 66, height: 58, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.line, borderRadius: 15, alignItems: "center", justifyContent: "center" },
   miniFieldLabel: { color: COLORS.muted, fontSize: 7, fontWeight: "900", letterSpacing: 1 },
   dayInput: { color: COLORS.ink, fontSize: 18, fontWeight: "900", textAlign: "center", width: "100%", padding: 0, marginTop: 2 },
-  referenceMonthPicker: { flex: 1, height: 58, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.line, borderRadius: 15, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 7 },
-  referenceArrow: { width: 34, height: 34, borderRadius: 11, backgroundColor: "#F0EBFF", alignItems: "center", justifyContent: "center" },
+  referenceMonthPicker: { flex: 1, height: 58, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.line, borderRadius: 15, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 7 },
+  referenceArrow: { width: 34, height: 34, borderRadius: 11, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center" },
   referenceMonthText: { flex: 1, color: COLORS.ink, fontSize: 12, fontWeight: "900", textTransform: "capitalize", textAlign: "center" },
-  dateError: { color: "#C95043", fontSize: 10, fontWeight: "700", marginBottom: 13 },
-  segment: { backgroundColor: "#EDE9F2", borderRadius: 15, padding: 4, flexDirection: "row", marginBottom: 18 },
+  dateError: { color: COLORS.danger, fontSize: 10, fontWeight: "700", marginBottom: 13 },
+  segment: { backgroundColor: COLORS.surfaceMuted, borderRadius: 15, padding: 4, flexDirection: "row", marginBottom: 18 },
   segmentItem: { flex: 1, height: 41, alignItems: "center", justifyContent: "center", borderRadius: 12 },
-  segmentActive: { backgroundColor: COLORS.white },
+  segmentActive: { backgroundColor: COLORS.surface },
   segmentText: { color: COLORS.muted, fontSize: 12, fontWeight: "800" },
   segmentActiveText: { color: COLORS.grape },
   chips: { gap: 8, paddingBottom: 18 },
-  chip: { borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.white, paddingHorizontal: 13, paddingVertical: 9, borderRadius: 20, flexDirection: "row", alignItems: "center", gap: 6 },
-  chipActive: { backgroundColor: "#EDE6FF", borderColor: "#BBA7F4" },
+  chip: { borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.surface, paddingHorizontal: 13, paddingVertical: 9, borderRadius: 20, flexDirection: "row", alignItems: "center", gap: 6 },
+  chipActive: { backgroundColor: COLORS.accentSurface, borderColor: COLORS.accentBorder },
   chipText: { color: COLORS.muted, fontSize: 11, fontWeight: "700" },
-  chipTextActive: { color: COLORS.white },
+  chipTextActive: { color: "#FFFFFF" },
   walletOptions: { gap: 8, marginBottom: 5 },
-  walletOption: { minHeight: 48, borderRadius: 14, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.line, flexDirection: "row", alignItems: "center", paddingHorizontal: 13, gap: 10 },
-  walletOptionActive: { borderColor: "#B9A6EE", backgroundColor: "#F3EFFF" },
+  walletOption: { minHeight: 48, borderRadius: 14, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.line, flexDirection: "row", alignItems: "center", paddingHorizontal: 13, gap: 10 },
+  walletOptionActive: { borderColor: COLORS.accentBorder, backgroundColor: COLORS.accentSurface },
   colorDot: { width: 10, height: 10, borderRadius: 5 },
   walletOptionText: { flex: 1, color: COLORS.ink, fontSize: 12, fontWeight: "700" },
   profileDataSection: { marginTop: 26, paddingTop: 22, borderTopWidth: 1, borderTopColor: COLORS.line },
   profileDataEyebrow: { color: COLORS.muted, fontSize: 9, fontWeight: "900", letterSpacing: 1.2, marginBottom: 9 },
-  profileImportButton: { minHeight: 72, borderRadius: 18, borderWidth: 1, borderColor: "#D9CDF8", backgroundColor: "#F5F1FF", padding: 13, flexDirection: "row", alignItems: "center", gap: 11 },
-  profileImportIcon: { width: 43, height: 43, borderRadius: 14, backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center" },
+  profileImportButton: { minHeight: 72, borderRadius: 18, borderWidth: 1, borderColor: COLORS.accentBorder, backgroundColor: COLORS.accentSurface, padding: 13, flexDirection: "row", alignItems: "center", gap: 11 },
+  profileImportIcon: { width: 43, height: 43, borderRadius: 14, backgroundColor: COLORS.surface, alignItems: "center", justifyContent: "center" },
   profileImportTitle: { color: COLORS.ink, fontSize: 12, fontWeight: "900" },
   profileImportText: { color: COLORS.muted, fontSize: 9, lineHeight: 13, marginTop: 3 },
-  bankImportHero: { borderRadius: 24, backgroundColor: "#F0EBFF", padding: 22, alignItems: "center", borderWidth: 1, borderColor: "#DED2FA" },
-  bankImportHeroIcon: { width: 62, height: 62, borderRadius: 21, backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center", transform: [{ rotate: "-4deg" }] },
+  bankImportHero: { borderRadius: 24, backgroundColor: COLORS.accentSurface, padding: 22, alignItems: "center", borderWidth: 1, borderColor: COLORS.accentBorder },
+  bankImportHeroIcon: { width: 62, height: 62, borderRadius: 21, backgroundColor: COLORS.surface, alignItems: "center", justifyContent: "center", transform: [{ rotate: "-4deg" }] },
   bankImportHeroTitle: { color: COLORS.ink, fontSize: 20, lineHeight: 24, fontWeight: "900", letterSpacing: -0.5, textAlign: "center", marginTop: 17 },
   bankImportHeroText: { color: COLORS.muted, fontSize: 10, lineHeight: 16, textAlign: "center", marginTop: 7, maxWidth: 330 },
   bankFileButton: { minHeight: 50, alignSelf: "stretch", borderRadius: 15, backgroundColor: COLORS.grape, marginTop: 18, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   bankFileButtonText: { color: "#FFFFFF", fontSize: 12, fontWeight: "900" },
-  bankImportSafety: { flexDirection: "row", alignItems: "flex-start", gap: 9, borderRadius: 15, backgroundColor: "#EAF8D0", padding: 13, marginTop: 13 },
-  bankImportSafetyText: { flex: 1, color: "#58721B", fontSize: 9, lineHeight: 14, fontWeight: "700" },
-  bankImportError: { flexDirection: "row", alignItems: "flex-start", gap: 9, borderRadius: 15, backgroundColor: "#FFF0ED", padding: 13, marginTop: 12 },
-  bankImportErrorText: { flex: 1, color: "#B54337", fontSize: 10, lineHeight: 15, fontWeight: "700" },
-  bankFileSummary: { minHeight: 72, borderRadius: 18, borderWidth: 1, borderColor: "#D9CDF8", backgroundColor: "#F5F1FF", padding: 13, marginBottom: 19, flexDirection: "row", alignItems: "center", gap: 11 },
+  bankImportSafety: { flexDirection: "row", alignItems: "flex-start", gap: 9, borderRadius: 15, backgroundColor: COLORS.successSurface, padding: 13, marginTop: 13 },
+  bankImportSafetyText: { flex: 1, color: COLORS.success, fontSize: 9, lineHeight: 14, fontWeight: "700" },
+  bankImportError: { flexDirection: "row", alignItems: "flex-start", gap: 9, borderRadius: 15, backgroundColor: COLORS.dangerSurface, padding: 13, marginTop: 12 },
+  bankImportErrorText: { flex: 1, color: COLORS.danger, fontSize: 10, lineHeight: 15, fontWeight: "700" },
+  bankFileSummary: { minHeight: 72, borderRadius: 18, borderWidth: 1, borderColor: COLORS.accentBorder, backgroundColor: COLORS.accentSurface, padding: 13, marginBottom: 19, flexDirection: "row", alignItems: "center", gap: 11 },
   bankFileBank: { color: COLORS.ink, fontSize: 12, fontWeight: "900" },
   bankFileName: { color: COLORS.muted, fontSize: 9, marginTop: 3, maxWidth: 230 },
-  bankFileChange: { minHeight: 32, borderRadius: 12, paddingHorizontal: 10, backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center" },
+  bankFileChange: { minHeight: 32, borderRadius: 12, paddingHorizontal: 10, backgroundColor: COLORS.surface, alignItems: "center", justifyContent: "center" },
   bankFileChangeText: { color: COLORS.grape, fontSize: 9, fontWeight: "900" },
-  bankImportTotals: { minHeight: 78, borderRadius: 18, backgroundColor: COLORS.ink, paddingHorizontal: 14, marginTop: 17, flexDirection: "row", alignItems: "center", gap: 11 },
+  bankImportTotals: { minHeight: 78, borderRadius: 18, backgroundColor: COLORS.mark, paddingHorizontal: 14, marginTop: 17, flexDirection: "row", alignItems: "center", gap: 11 },
   bankImportTotalBlock: { flex: 1 },
   bankImportTotalLabel: { color: "#AFA8BD", fontSize: 7, fontWeight: "900", letterSpacing: 0.7 },
   bankImportTotalValue: { color: "#FFFFFF", fontSize: 22, fontWeight: "900", marginTop: 3 },
   bankImportTotalMoney: { color: "#FFFFFF", fontSize: 10, fontWeight: "900", marginTop: 5 },
-  bankReviewNotice: { borderRadius: 15, backgroundColor: "#FFF0CA", padding: 13, marginTop: 12, flexDirection: "row", alignItems: "flex-start", gap: 9 },
-  bankReviewNoticeText: { flex: 1, color: "#815A10", fontSize: 9, lineHeight: 14, fontWeight: "700" },
+  bankReviewNotice: { borderRadius: 15, backgroundColor: COLORS.warningSurface, padding: 13, marginTop: 12, flexDirection: "row", alignItems: "flex-start", gap: 9 },
+  bankReviewNoticeText: { flex: 1, color: COLORS.warning, fontSize: 9, lineHeight: 14, fontWeight: "700" },
   bankReviewHeader: { marginTop: 25, marginBottom: 11, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   bankReviewTitle: { color: COLORS.ink, fontSize: 17, fontWeight: "900" },
   bankReviewActionText: { color: COLORS.grape, fontSize: 9, fontWeight: "900" },
   bankDraftList: { gap: 9, marginBottom: 18 },
-  bankDraftCard: { borderRadius: 18, borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.white, padding: 13 },
-  bankDraftCardMuted: { backgroundColor: "#F5F3F7" },
+  bankDraftCard: { borderRadius: 18, borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.surface, padding: 13 },
+  bankDraftCardMuted: { backgroundColor: COLORS.surfaceMuted },
   bankDraftCardDuplicate: { opacity: 0.62 },
   bankDraftTop: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
-  bankDraftCheck: { width: 27, height: 27, borderRadius: 9, borderWidth: 1.5, borderColor: "#C9C3D0", backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center" },
+  bankDraftCheck: { width: 27, height: 27, borderRadius: 9, borderWidth: 1.5, borderColor: COLORS.line, backgroundColor: COLORS.surface, alignItems: "center", justifyContent: "center" },
   bankDraftCheckActive: { borderColor: COLORS.grape, backgroundColor: COLORS.grape },
   bankDraftTitleInput: { color: COLORS.ink, fontSize: 11, fontWeight: "900", padding: 0 },
   bankDraftOriginal: { color: COLORS.muted, fontSize: 8, lineHeight: 12, marginTop: 3 },
@@ -2607,15 +2609,15 @@ const createStyleDefinition = () => ({
   bankDraftMeta: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 11 },
   bankDraftCategory: { minHeight: 25, borderRadius: 11, paddingHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 5 },
   bankDraftCategoryText: { fontSize: 8, fontWeight: "900" },
-  bankDraftReviewText: { color: "#9A6810", fontSize: 7, fontWeight: "900", letterSpacing: 0.5 },
+  bankDraftReviewText: { color: COLORS.warning, fontSize: 7, fontWeight: "900", letterSpacing: 0.5 },
   bankDraftDuplicateText: { color: COLORS.muted, fontSize: 7, fontWeight: "900", letterSpacing: 0.4 },
-  bankDraftEdit: { minHeight: 25, marginLeft: "auto", paddingHorizontal: 8, borderRadius: 10, backgroundColor: "#F0EBFF", flexDirection: "row", alignItems: "center", gap: 4 },
+  bankDraftEdit: { minHeight: 25, marginLeft: "auto", paddingHorizontal: 8, borderRadius: 10, backgroundColor: COLORS.accentSurface, flexDirection: "row", alignItems: "center", gap: 4 },
   bankDraftEditText: { color: COLORS.grape, fontSize: 8, fontWeight: "900" },
   bankDraftEditor: { borderTopWidth: 1, borderTopColor: COLORS.line, marginTop: 13, paddingTop: 14 },
-  bankImportValidation: { color: "#B54337", fontSize: 10, fontWeight: "700", marginBottom: 12 },
-  autoPostNote: { flexDirection: "row", alignItems: "center", gap: 9, backgroundColor: "#F0F9D9", borderRadius: 14, padding: 12, marginTop: 10 },
-  autoPostText: { flex: 1, color: "#58721B", fontSize: 10, lineHeight: 14, fontWeight: "700" },
-  profileCard: { flexDirection: "row", alignItems: "center", gap: 13, backgroundColor: COLORS.white, borderRadius: 18, padding: 14, borderWidth: 1, borderColor: COLORS.line, marginBottom: 20 },
+  bankImportValidation: { color: COLORS.danger, fontSize: 10, fontWeight: "700", marginBottom: 12 },
+  autoPostNote: { flexDirection: "row", alignItems: "center", gap: 9, backgroundColor: COLORS.successSurface, borderRadius: 14, padding: 12, marginTop: 10 },
+  autoPostText: { flex: 1, color: COLORS.success, fontSize: 10, lineHeight: 14, fontWeight: "700" },
+  profileCard: { flexDirection: "row", alignItems: "center", gap: 13, backgroundColor: COLORS.surface, borderRadius: 18, padding: 14, borderWidth: 1, borderColor: COLORS.line, marginBottom: 20 },
   profileAvatar: { width: 48, height: 48, borderRadius: 17, backgroundColor: COLORS.lime, alignItems: "center", justifyContent: "center" },
   profileAvatarText: { color: COLORS.ink, fontSize: 14, fontWeight: "900" },
   profileName: { color: COLORS.ink, fontSize: 15, fontWeight: "900" },
@@ -2624,20 +2626,20 @@ const createStyleDefinition = () => ({
   profileNameEditorHeader: { minHeight: 20, flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
   profileNameStatus: { flexDirection: "row", alignItems: "center", gap: 5 },
   profileNameStatusText: { color: COLORS.grape, fontSize: 9, fontWeight: "800" },
-  profileNameSavedText: { color: "#66851D", fontSize: 9, fontWeight: "800" },
-  profileNameError: { color: "#B54337", fontSize: 10, lineHeight: 14, marginTop: 7 },
+  profileNameSavedText: { color: COLORS.success, fontSize: 9, fontWeight: "800" },
+  profileNameError: { color: COLORS.danger, fontSize: 10, lineHeight: 14, marginTop: 7 },
   profileSecuritySection: { marginTop: 26, paddingTop: 22, borderTopWidth: 1, borderTopColor: COLORS.line },
-  profileSecurityButton: { minHeight: 68, borderRadius: 18, borderWidth: 1, borderColor: "#D9CDF8", backgroundColor: "#F5F1FF", padding: 13, flexDirection: "row", alignItems: "center", gap: 11 },
-  profileSecurityIcon: { width: 43, height: 43, borderRadius: 14, backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center" },
+  profileSecurityButton: { minHeight: 68, borderRadius: 18, borderWidth: 1, borderColor: COLORS.accentBorder, backgroundColor: COLORS.accentSurface, padding: 13, flexDirection: "row", alignItems: "center", gap: 11 },
+  profileSecurityIcon: { width: 43, height: 43, borderRadius: 14, backgroundColor: COLORS.surface, alignItems: "center", justifyContent: "center" },
   passwordEditor: { marginTop: 14, gap: 7 },
-  passwordSuccess: { flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 12, padding: 11, backgroundColor: "#F0F9D9", marginTop: 3 },
-  passwordSuccessText: { color: "#58721B", fontSize: 10, lineHeight: 15, fontWeight: "700" },
-  signOutButton: { height: 48, borderRadius: 15, borderWidth: 1, borderColor: "#F0BEB8", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 12 },
-  signOutButtonText: { color: "#B54337", fontSize: 11, fontWeight: "900" },
-  goalInput: { minHeight: 130, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.line, borderRadius: 16, padding: 14, color: COLORS.ink, fontSize: 13, lineHeight: 19 },
+  passwordSuccess: { flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 12, padding: 11, backgroundColor: COLORS.successSurface, marginTop: 3 },
+  passwordSuccessText: { color: COLORS.success, fontSize: 10, lineHeight: 15, fontWeight: "700" },
+  signOutButton: { height: 48, borderRadius: 15, borderWidth: 1, borderColor: COLORS.dangerBorder, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 12 },
+  signOutButtonText: { color: COLORS.danger, fontSize: 11, fontWeight: "900" },
+  goalInput: { minHeight: 130, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.line, borderRadius: 16, padding: 14, color: COLORS.ink, fontSize: 13, lineHeight: 19 },
   goalHint: { color: COLORS.muted, fontSize: 10, lineHeight: 15, marginTop: 8 },
   themeSelector: { flexDirection: "row", gap: 8, marginBottom: 18 },
-  themeOption: { flex: 1, minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.white, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
+  themeOption: { flex: 1, minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.surface, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
   themeOptionActive: { backgroundColor: COLORS.grape, borderColor: COLORS.grape },
   themeOptionText: { color: COLORS.muted, fontSize: 10, fontWeight: "800" },
   themeOptionTextActive: { color: "#FFFFFF" },
@@ -2654,21 +2656,18 @@ const createStyleDefinition = () => ({
   analysisSummary: { color: COLORS.muted, fontSize: 12, lineHeight: 18, marginVertical: 18 },
   analysisSectionTitle: { color: COLORS.ink, fontSize: 13, fontWeight: "900", marginTop: 8, marginBottom: 10 },
   analysisItem: { flexDirection: "row", alignItems: "flex-start", gap: 10, marginBottom: 10 },
-  analysisBullet: { width: 21, height: 21, borderRadius: 8, backgroundColor: "#F0EBFF", alignItems: "center", justifyContent: "center" },
+  analysisBullet: { width: 21, height: 21, borderRadius: 8, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center" },
   analysisBulletText: { color: COLORS.grape, fontSize: 9, fontWeight: "900" },
-  analysisItemText: { flex: 1, color: "#575162", fontSize: 11, lineHeight: 16 },
-  appSuggestion: { flexDirection: "row", alignItems: "flex-start", gap: 10, backgroundColor: "#F3EFFF", borderRadius: 14, padding: 12, marginBottom: 9 },
-  suggestionIcon: { width: 28, height: 28, borderRadius: 10, backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center" },
-  refreshAnalysis: { height: 48, borderRadius: 15, borderWidth: 1, borderColor: "#BFAFF0", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 16 },
+  analysisItemText: { flex: 1, color: COLORS.muted, fontSize: 11, lineHeight: 16 },
+  appSuggestion: { flexDirection: "row", alignItems: "flex-start", gap: 10, backgroundColor: COLORS.accentSurface, borderRadius: 14, padding: 12, marginBottom: 9 },
+  suggestionIcon: { width: 28, height: 28, borderRadius: 10, backgroundColor: COLORS.surface, alignItems: "center", justifyContent: "center" },
+  refreshAnalysis: { height: 48, borderRadius: 15, borderWidth: 1, borderColor: COLORS.accentBorder, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 16 },
   refreshAnalysisText: { color: COLORS.grape, fontSize: 11, fontWeight: "900" },
   primaryButton: { height: 54, marginTop: 20, backgroundColor: COLORS.grape, borderRadius: 16, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 10 },
   primaryButtonText: { color: "white", fontSize: 13, fontWeight: "900" },
   buttonDisabled: { opacity: 0.38 },
 });
-const createStyles = () => {
-  const definition = createStyleDefinition();
-  return StyleSheet.create((COLORS.paper === DARK_COLORS.paper ? applyLiteralTheme(definition) : definition) as any);
-};
+const createStyles = () => StyleSheet.create(createStyleDefinition() as any);
 let styles = createStyles();
 
 export default function App() {
