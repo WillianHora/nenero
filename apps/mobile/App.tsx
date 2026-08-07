@@ -53,6 +53,7 @@ type SavingsContribution = {
 };
 type SavingsPot = {
   id: string;
+  type: "savings" | "debt";
   name: string;
   description: string;
   goal: number;
@@ -115,7 +116,7 @@ const COLORS = { ...LIGHT_COLORS };
 type ThemeMode = "system" | "light" | "dark";
 const THEME_STORAGE_KEY = "@nenero/theme";
 
-const walletPalette = ["#7147E8", "#FF7B6B", "#2DAE8C", "#E0A72B"];
+const walletPalette = ["#7147E8", "#111111", "#2563EB", "#FF7B6B", "#F97316", "#2DAE8C", "#E0A72B", "#C13C8A", "#64748B"];
 const expenseCategories = ["Mercado", "Casa", "Transporte", "Lazer", "Delivery", "Educação", "Saúde", "Assinatura", "Outros"];
 const incomeCategories = ["Salário", "Freelance", "Férias", "Bonificações", "13º salário", "Rendimentos", "Reembolso", "Venda", "Outras entradas"];
 const categoriesByKind: Record<EntryKind, string[]> = {
@@ -182,6 +183,7 @@ const getElapsedMonths = (from: string, to = new Date()) => {
   return Math.max(0, (to.getFullYear() - start.getFullYear()) * 12 + to.getMonth() - start.getMonth());
 };
 const getSavingsPotBalance = (pot: SavingsPot) => {
+  if (pot.type === "debt") return pot.contributions.reduce((sum, contribution) => sum + contribution.value, 0);
   const rate = getRealMonthlyRate(pot);
   return pot.contributions.reduce((sum, contribution) => sum + contribution.value * Math.pow(1 + rate, getElapsedMonths(contribution.createdAt)), 0);
 };
@@ -201,12 +203,12 @@ const isSalaryLike = (item: Pick<Entry, "kind" | "category" | "title">) => {
   const title = normalizeFinanceLabel(item.title);
   return category === "renda" || category === "salario" || title.includes("salario");
 };
-const getDreamsBalance = (pots: SavingsPot[]) => pots.reduce((total, pot) => total + getSavingsPotBalance(pot), 0);
+const getDreamsBalance = (pots: SavingsPot[]) => pots.filter((pot) => pot.type !== "debt").reduce((total, pot) => total + getSavingsPotBalance(pot), 0);
 const getWalletAvailableBalance = (wallet: Wallet, entries: Entry[], pots: SavingsPot[]) => {
   const movementBalance = entries
     .filter((entry) => entry.walletId === wallet.id)
     .reduce((sum, entry) => sum + (entry.kind === "income" ? entry.value : -entry.value), wallet.initial);
-  const reserved = pots.reduce(
+  const reserved = pots.filter((pot) => pot.type !== "debt").reduce(
     (total, pot) => total + pot.contributions
       .filter((contribution) => contribution.walletId === wallet.id)
       .reduce((sum, contribution) => sum + contribution.value, 0),
@@ -310,6 +312,7 @@ function AppContent() {
           const fallbackWalletId = loadedWallets[0]?.id;
           const loadedSavingsPots: SavingsPot[] = (data.savingsPots ?? []).map((pot: SavingsPot) => ({
             ...pot,
+            type: pot.type ?? "savings",
             compoundInterest: pot.compoundInterest ?? false,
             monthlyInterestRate: pot.monthlyInterestRate ?? 0,
             annualInflationRate: pot.annualInflationRate ?? 0,
@@ -512,6 +515,7 @@ function AppContent() {
         .map((contribution) => wallets.find((wallet) => wallet.id === contribution.walletId)?.name)
         .filter((name): name is string => Boolean(name)))];
       return {
+        type: pot.type === "debt" ? "dívida" : "economia",
         name: pot.name,
         description: pot.description,
         goal: pot.goal,
@@ -947,7 +951,7 @@ Antes de responder, confira silenciosamente:
           if (editingWallet) {
             setWallets((items) => items.map((item) => item.id === editingWallet.id ? { ...item, ...wallet } : item));
           } else {
-            setWallets((items) => [...items, { ...wallet, id: uid(), color: walletPalette[items.length % walletPalette.length] ?? COLORS.grape }]);
+            setWallets((items) => [...items, { ...wallet, id: uid() }]);
           }
           setModal(null);
           setEditingWallet(null);
@@ -1013,10 +1017,12 @@ Antes de responder, confira silenciosamente:
         onClose={() => { setModal(null); setSelectedPot(null); }}
         onSave={(value, walletId) => {
           if (!selectedPot) return;
+          const paidPot = selectedPot;
           setSavingsPots(items => items.map(pot => pot.id === selectedPot.id ? {
             ...pot,
             contributions: [...pot.contributions, { id: uid(), value, walletId, createdAt: new Date().toISOString() }],
           } : pot));
+          if (paidPot.type === "debt") setEntries(items => [{ id: uid(), title: `Pagamento da dívida: ${paidPot.name}`, value, kind: "expense", category: "Outros", walletId, createdAt: new Date().toISOString() }, ...items]);
           setAnalysis(null);
           setModal(null);
           setSelectedPot(null);
@@ -1337,6 +1343,7 @@ function WalletList({ walletBalances, pots, dreamsBalance, onAdd, onEdit, onOpen
   onEdit: (wallet: Wallet) => void;
   onOpenDreams: () => void;
 }) {
+  const savingsGoals = pots.filter((pot) => pot.type !== "debt");
   return (
     <>
       <PageHeader eyebrow="CADA REAL NO SEU CANTO" title="Carteiras" button="Criar" onPress={onAdd} />
@@ -1354,7 +1361,7 @@ function WalletList({ walletBalances, pots, dreamsBalance, onAdd, onEdit, onOpen
         </Pressable>
       ))}
       <Pressable style={styles.dashedButton} onPress={onAdd}><Feather name="plus" size={20} color={COLORS.grape} /><Text style={styles.dashedText}>Criar outra carteira</Text></Pressable>
-      {pots.length > 0 && <>
+      {savingsGoals.length > 0 && <>
         <View style={styles.dreamsSectionHeader}>
           <Text style={styles.dreamsSectionEyebrow}>DINHEIRO COM DESTINO</Text>
           <View style={styles.dreamsSectionLine} />
@@ -1373,9 +1380,9 @@ function WalletList({ walletBalances, pots, dreamsBalance, onAdd, onEdit, onOpen
             </View>
             <Text style={styles.dreamWalletLabel}>Meus sonhos</Text>
             <Text style={styles.dreamWalletBalance}>{money(dreamsBalance)}</Text>
-            <Text style={styles.dreamWalletCopy}>{pots.length} {pots.length === 1 ? "cofrinho guardando um plano" : "cofrinhos guardando seus planos"}. Esse dinheiro continua seu, só saiu da rota do impulso.</Text>
+            <Text style={styles.dreamWalletCopy}>{savingsGoals.length} {savingsGoals.length === 1 ? "meta guardando um plano" : "metas guardando seus planos"}. Esse dinheiro continua seu, só saiu da rota do impulso.</Text>
             <View style={styles.dreamWalletPotList}>
-              {pots.slice(0, 3).map((pot) => {
+              {savingsGoals.slice(0, 3).map((pot) => {
                 const saved = getSavingsPotBalance(pot);
                 return <View key={pot.id} style={styles.dreamWalletPot}>
                   <View style={styles.dreamWalletPotDot} />
@@ -1383,10 +1390,10 @@ function WalletList({ walletBalances, pots, dreamsBalance, onAdd, onEdit, onOpen
                   <Text style={styles.dreamWalletPotValue}>{money(saved)}</Text>
                 </View>;
               })}
-              {pots.length > 3 && <Text style={styles.dreamWalletMore}>+ {pots.length - 3} {pots.length - 3 === 1 ? "outro sonho" : "outros sonhos"}</Text>}
+              {savingsGoals.length > 3 && <Text style={styles.dreamWalletMore}>+ {savingsGoals.length - 3} {savingsGoals.length - 3 === 1 ? "outro sonho" : "outros sonhos"}</Text>}
             </View>
             <View style={styles.dreamWalletOpen}>
-              <Text style={styles.dreamWalletOpenText}>Ver meus cofrinhos</Text>
+              <Text style={styles.dreamWalletOpenText}>Ver minhas metas</Text>
               <Feather name="arrow-up-right" size={16} color={COLORS.lime} />
             </View>
           </LinearGradient>
@@ -1399,7 +1406,7 @@ function WalletList({ walletBalances, pots, dreamsBalance, onAdd, onEdit, onOpen
 function SavingsPotList({ pots, wallets, onAdd, onDeposit }: { pots: SavingsPot[]; wallets: Wallet[]; onAdd: () => void; onDeposit: (pot: SavingsPot) => void }) {
   return (
     <>
-      <PageHeader eyebrow="UM POUQUINHO VIRA MUITO" title="Cofrinhos" button="Criar" onPress={onAdd} />
+      <PageHeader eyebrow="PLANOS QUE SAEM DO PAPEL" title="Metas" button="Criar" onPress={onAdd} />
       {pots.length ? pots.map(pot => {
         const saved = getSavingsPotBalance(pot);
         const progress = Math.min(100, Math.round((saved / pot.goal) * 100));
@@ -1414,34 +1421,34 @@ function SavingsPotList({ pots, wallets, onAdd, onDeposit }: { pots: SavingsPot[
         return (
           <View key={pot.id} style={styles.potCard}>
             <View style={styles.potTop}>
-              <View style={styles.potIcon}><MaterialCommunityIcons name="piggy-bank-outline" size={25} color={COLORS.grape} /></View>
+              <View style={styles.potIcon}><MaterialCommunityIcons name={pot.type === "debt" ? "receipt-text-outline" : "piggy-bank-outline"} size={25} color={COLORS.grape} /></View>
               <View style={styles.flex}><Text style={styles.potName}>{pot.name}</Text><Text style={styles.potDescription}>{pot.description || "Um objetivo com lugar marcado."}</Text></View>
               <Text style={styles.potPercent}>{progress}%</Text>
             </View>
             <View style={styles.potProgressTrack}><View style={[styles.potProgressFill, { width: `${progress}%` }]} /></View>
             <View style={styles.potValues}>
-              <View><Text style={styles.potValueLabel}>JÁ GUARDOU</Text><Text style={styles.potSaved}>{money(saved)}</Text></View>
-              <View style={styles.potGoalBlock}><Text style={styles.potValueLabel}>META</Text><Text style={styles.potGoal}>{money(pot.goal)}</Text></View>
+              <View><Text style={styles.potValueLabel}>{pot.type === "debt" ? "JÁ PAGOU" : "JÁ GUARDOU"}</Text><Text style={styles.potSaved}>{money(saved)}</Text></View>
+              <View style={styles.potGoalBlock}><Text style={styles.potValueLabel}>{pot.type === "debt" ? "DÍVIDA TOTAL" : "META"}</Text><Text style={styles.potGoal}>{money(pot.goal)}</Text></View>
             </View>
             <Text style={styles.potPlan}>{money(monthlyTarget)}/mês · até {deadline.toLocaleDateString("pt-BR", { month: "short", year: "numeric" })}</Text>
             {pot.compoundInterest && <View style={styles.potYieldBadge}><Feather name="trending-up" size={13} color="#167B6B" /><Text style={styles.potYieldText}>{(realMonthlyRate * 100).toLocaleString("pt-BR", { maximumFractionDigits: 3 })}% ao mês, já descontada a inflação</Text></View>}
             {!!sourceWalletNames.length && <View style={styles.potSourceLine}>
               <Feather name="corner-down-right" size={13} color={COLORS.muted} />
-              <Text style={styles.potSourceText} numberOfLines={1}>Veio de {sourceWalletNames.join(", ")}</Text>
+              <Text style={styles.potSourceText} numberOfLines={1}>{pot.type === "debt" ? "Pago por " : "Veio de "}{sourceWalletNames.join(", ")}</Text>
             </View>}
             {remaining > 0 ? (
-              <Pressable style={styles.potDepositButton} onPress={() => onDeposit(pot)}><Feather name="plus" size={17} color="white" /><Text style={styles.potDepositButtonText}>Colocar dinheiro</Text></Pressable>
+              <Pressable style={styles.potDepositButton} onPress={() => onDeposit(pot)}><Feather name={pot.type === "debt" ? "credit-card" : "plus"} size={17} color="white" /><Text style={styles.potDepositButtonText}>{pot.type === "debt" ? "Registrar pagamento" : "Colocar dinheiro"}</Text></Pressable>
             ) : (
-              <View style={styles.potComplete}><Feather name="check-circle" size={17} color="#66851D" /><Text style={styles.potCompleteText}>Meta batida. Esse porquinho está forte!</Text></View>
+              <View style={styles.potComplete}><Feather name="check-circle" size={17} color="#66851D" /><Text style={styles.potCompleteText}>{pot.type === "debt" ? "Dívida quitada. Que alívio!" : "Meta batida. Esse porquinho está forte!"}</Text></View>
             )}
           </View>
         );
       }) : (
         <View style={styles.emptyState}>
           <View style={styles.emptyIcon}><MaterialCommunityIcons name="piggy-bank-outline" size={25} color={COLORS.grape} /></View>
-          <Text style={styles.emptyTitle}>Seu primeiro cofrinho</Text>
-          <Text style={styles.emptyText}>Dê nome à meta e comece com qualquer valor.</Text>
-          <Pressable style={styles.emptyPotButton} onPress={onAdd}><Text style={styles.emptyPotButtonText}>Criar cofrinho</Text></Pressable>
+          <Text style={styles.emptyTitle}>Sua primeira meta</Text>
+          <Text style={styles.emptyText}>Junte para um sonho ou acompanhe a quitação de uma dívida.</Text>
+          <Pressable style={styles.emptyPotButton} onPress={onAdd}><Text style={styles.emptyPotButtonText}>Criar meta</Text></Pressable>
         </View>
       )}
     </>
@@ -1482,7 +1489,7 @@ function SectionTitle({ title, action }: { title: string; action?: string }) {
 function BottomNav({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
   const tabs: { key: Tab; label: string; icon: keyof typeof Feather.glyphMap }[] = [
     { key: "inicio", label: "Início", icon: "home" }, { key: "movimentos", label: "Movimentos", icon: "list" },
-    { key: "recorrentes", label: "Planejados", icon: "repeat" }, { key: "cofrinhos", label: "Cofrinhos", icon: "target" },
+    { key: "recorrentes", label: "Planejados", icon: "repeat" }, { key: "cofrinhos", label: "Metas", icon: "target" },
     { key: "carteiras", label: "Carteiras", icon: "credit-card" },
   ];
   return <View style={styles.nav}>{tabs.map((item) => <Pressable key={item.key} style={styles.navItem} onPress={() => setTab(item.key)}><Feather name={item.icon} size={21} color={tab === item.key ? COLORS.grape : "#AAA4B3"} /><Text style={[styles.navLabel, tab === item.key && styles.navActive]}>{item.label}</Text>{tab === item.key && <View style={styles.navDot} />}</Pressable>)}</View>;
@@ -1642,27 +1649,30 @@ function WalletModal({ visible, item, onClose, onSave, onDelete }: {
   visible: boolean;
   item: Wallet | null;
   onClose: () => void;
-  onSave: (wallet: Omit<Wallet, "id" | "color">) => void;
+  onSave: (wallet: Omit<Wallet, "id">) => void;
   onDelete?: () => void;
 }) {
-  const [name, setName] = useState(""); const [initial, setInitial] = useState("");
+  const [name, setName] = useState(""); const [initial, setInitial] = useState(""); const [color, setColor] = useState(walletPalette[0]!);
   useEffect(() => {
     if (!visible) return;
     setName(item?.name ?? "");
     setInitial("");
+    setColor(item?.color ?? walletPalette[0]!);
   }, [visible, item]);
   const save = () => {
     const initialBalance = item?.initial ?? (parseMoneyInput(initial) || 0);
-    if (name.trim()) onSave({ name: name.trim(), initial: initialBalance });
+    if (name.trim()) onSave({ name: name.trim(), initial: initialBalance, color });
   };
   return <Sheet
     visible={visible}
     title={item ? "Editar carteira" : "Nova carteira"}
-    subtitle={item ? "Troque o nome sem mexer na história do saldo." : "Um cantinho novo pro seu dinheiro."}
+    subtitle={item ? "Ajuste o nome e a cor sem mexer na história do saldo." : "Um cantinho novo pro seu dinheiro."}
     onClose={onClose}
   >
     <Field label="Nome da carteira" value={name} onChange={setName} placeholder="Ex.: Conta do dia a dia" />
     {!item && <Field label="Saldo inicial" value={initial} onChange={setInitial} placeholder="R$ 0,00" keyboardType="decimal-pad" money />}
+    <Text style={styles.fieldLabel}>Cor da carteira</Text>
+    <View style={styles.walletColorPalette}>{walletPalette.map((option) => <Pressable key={option} accessibilityRole="radio" accessibilityState={{ checked: color === option }} accessibilityLabel={option === "#111111" ? "Cor preta" : `Cor ${option}`} style={[styles.walletColorOption, { backgroundColor: option }, color === option && styles.walletColorOptionActive]} onPress={() => setColor(option)}>{color === option && <Feather name="check" size={18} color="#FFFFFF" />}</Pressable>)}</View>
     <PrimaryButton label={item ? "Salvar alterações" : "Criar carteira"} onPress={save} disabled={!name.trim()} />
     {item && onDelete && <Pressable style={styles.deleteWalletButton} onPress={onDelete}>
       <Feather name="trash-2" size={16} color="#B54337" />
@@ -1713,7 +1723,8 @@ function RecurringModal({ visible, wallets, item, onClose, onSave }: { visible: 
   </Sheet>;
 }
 
-function SavingsPotModal({ visible, onClose, onSave }: { visible: boolean; onClose: () => void; onSave: (pot: Pick<SavingsPot, "name" | "description" | "goal" | "months" | "compoundInterest" | "monthlyInterestRate" | "annualInflationRate">) => void }) {
+function SavingsPotModal({ visible, onClose, onSave }: { visible: boolean; onClose: () => void; onSave: (pot: Pick<SavingsPot, "type" | "name" | "description" | "goal" | "months" | "compoundInterest" | "monthlyInterestRate" | "annualInflationRate">) => void }) {
+  const [type, setType] = useState<SavingsPot["type"]>("savings");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [goalValue, setGoalValue] = useState("");
@@ -1722,7 +1733,7 @@ function SavingsPotModal({ visible, onClose, onSave }: { visible: boolean; onClo
   const [monthlyInterestRate, setMonthlyInterestRate] = useState("");
   const [annualInflationRate, setAnnualInflationRate] = useState("");
   useEffect(() => {
-    if (visible) { setName(""); setDescription(""); setGoalValue(""); setMonths("9"); setCompoundInterest(false); setMonthlyInterestRate(""); setAnnualInflationRate(""); }
+    if (visible) { setType("savings"); setName(""); setDescription(""); setGoalValue(""); setMonths("9"); setCompoundInterest(false); setMonthlyInterestRate(""); setAnnualInflationRate(""); }
   }, [visible]);
   const goal = parseMoneyInput(goalValue);
   const parsedMonths = Number(months);
@@ -1732,8 +1743,9 @@ function SavingsPotModal({ visible, onClose, onSave }: { visible: boolean; onClo
   const realMonthlyRate = getRealMonthlyRate({ compoundInterest, monthlyInterestRate: nominalRate || 0, annualInflationRate: inflationRate || 0 });
   const monthlyTarget = goal > 0 && parsedMonths > 0 ? getMonthlyTarget(goal, parsedMonths, realMonthlyRate) : 0;
   const valid = Boolean(name.trim()) && goal > 0 && parsedMonths >= 1 && parsedMonths <= 120 && interestConfigValid;
-  return <Sheet visible={visible} title="Novo cofrinho" subtitle="Dê um destino para cada real guardado." onClose={onClose}>
-    <Field label="Nome do cofrinho" value={name} onChange={setName} placeholder="Ex.: Viagem, notebook, reserva..." />
+  return <Sheet visible={visible} title="Nova meta" subtitle="Escolha se você quer juntar dinheiro ou quitar uma dívida." onClose={onClose}>
+    <View style={styles.segment}><Pressable style={[styles.segmentItem, type === "savings" && styles.segmentActive]} onPress={() => setType("savings")}><Text style={[styles.segmentText, type === "savings" && styles.segmentActiveText]}>Juntar dinheiro</Text></Pressable><Pressable style={[styles.segmentItem, type === "debt" && styles.segmentActive]} onPress={() => { setType("debt"); setCompoundInterest(false); }}><Text style={[styles.segmentText, type === "debt" && styles.segmentActiveText]}>Quitar dívida</Text></Pressable></View>
+    <Field label={type === "debt" ? "Nome da dívida" : "Nome da meta"} value={name} onChange={setName} placeholder={type === "debt" ? "Ex.: Cartão, empréstimo..." : "Ex.: Viagem, notebook, reserva..."} />
     <Text style={styles.fieldLabel}>Descrição</Text>
     <TextInput
       style={styles.potDescriptionInput}
@@ -1745,16 +1757,16 @@ function SavingsPotModal({ visible, onClose, onSave }: { visible: boolean; onClo
       maxLength={180}
       textAlignVertical="top"
     />
-    <Field label="Quanto quer juntar?" value={goalValue} onChange={setGoalValue} placeholder="R$ 1.800,00" keyboardType="decimal-pad" money />
+    <Field label={type === "debt" ? "Valor total da dívida" : "Quanto quer juntar?"} value={goalValue} onChange={setGoalValue} placeholder="R$ 1.800,00" keyboardType="decimal-pad" money />
     <Field label="Em quantos meses?" value={months} onChange={setMonths} placeholder="Ex.: 9" keyboardType="number-pad" />
-    <View style={styles.interestToggleCard}><View style={styles.interestToggleCopy}><Text style={styles.interestToggleTitle}>Este cofrinho rende juros compostos?</Text><Text style={styles.interestToggleHint}>Ative para considerar o rendimento na projeção da meta.</Text></View><Switch value={compoundInterest} onValueChange={setCompoundInterest} trackColor={{ false: "#D8D2DE", true: "#B9A8EC" }} thumbColor={compoundInterest ? COLORS.grape : "#FFFFFF"} /></View>
+    {type === "savings" && <View style={styles.interestToggleCard}><View style={styles.interestToggleCopy}><Text style={styles.interestToggleTitle}>Esta meta rende juros compostos?</Text><Text style={styles.interestToggleHint}>Ative para considerar o rendimento na projeção da meta.</Text></View><Switch value={compoundInterest} onValueChange={setCompoundInterest} trackColor={{ false: "#D8D2DE", true: "#B9A8EC" }} thumbColor={compoundInterest ? COLORS.grape : "#FFFFFF"} /></View>}
     {compoundInterest && <View style={styles.interestFields}>
       <Field label="Rendimento ao mês (%)" value={monthlyInterestRate} onChange={setMonthlyInterestRate} placeholder="Ex.: 0,8" keyboardType="decimal-pad" />
       <Field label="Inflação ao ano (%) · opcional" value={annualInflationRate} onChange={setAnnualInflationRate} placeholder="Ex.: 4,5" keyboardType="decimal-pad" />
       {interestConfigValid && nominalRate > 0 && <View style={styles.realRateCard}><Feather name="shield" size={16} color="#167B6B" /><View style={styles.flex}><Text style={styles.realRateLabel}>RENDIMENTO REAL ESTIMADO</Text><Text style={styles.realRateValue}>{(realMonthlyRate * 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 3 })}% ao mês</Text><Text style={styles.realRateHint}>Rendimento nominal menos o efeito composto da inflação anual.</Text></View></View>}
     </View>}
     {goal > 0 && parsedMonths > 0 && <View style={styles.potPreview}><Feather name={compoundInterest ? "trending-up" : "calendar"} size={17} color={COLORS.grape} /><Text style={styles.potPreviewText}>Para chegar lá: {money(monthlyTarget)} por mês{compoundInterest ? ", considerando o rendimento real." : "."}</Text></View>}
-    <PrimaryButton label="Criar cofrinho" onPress={() => valid && onSave({ name: name.trim(), description: description.trim(), goal, months: parsedMonths, compoundInterest, monthlyInterestRate: compoundInterest ? nominalRate : 0, annualInflationRate: compoundInterest ? inflationRate : 0 })} disabled={!valid} />
+    <PrimaryButton label={type === "debt" ? "Criar meta de dívida" : "Criar meta"} onPress={() => valid && onSave({ type, name: name.trim(), description: description.trim(), goal, months: parsedMonths, compoundInterest: type === "savings" && compoundInterest, monthlyInterestRate: type === "savings" && compoundInterest ? nominalRate : 0, annualInflationRate: type === "savings" && compoundInterest ? inflationRate : 0 })} disabled={!valid} />
   </Sheet>;
 }
 
@@ -1781,11 +1793,13 @@ function SavingsPotDepositModal({ visible, pot, walletBalances, dreamsBalance, o
   const remaining = Math.max(0, (pot?.goal ?? 0) - saved);
   const selectedWallet = walletBalances.find((item) => item.wallet.id === walletId);
   const insufficientBalance = Boolean(selectedWallet && value > selectedWallet.balance);
-  const canSave = Boolean(walletId && value > 0 && selectedWallet && !insufficientBalance);
-  return <Sheet visible={visible} title={`Guardar em ${pot?.name ?? "cofrinho"}`} subtitle={`Faltam ${money(remaining)}. Agora escolha de onde esse dinheiro vai sair.`} onClose={onClose}>
+  const isDebt = pot?.type === "debt";
+  const exceedsGoal = value > remaining && remaining > 0;
+  const canSave = Boolean(walletId && value > 0 && selectedWallet && !insufficientBalance && !exceedsGoal);
+  return <Sheet visible={visible} title={isDebt ? `Pagar ${pot?.name ?? "dívida"}` : `Guardar em ${pot?.name ?? "meta"}`} subtitle={`Faltam ${money(remaining)}. Agora escolha de onde esse dinheiro vai sair.`} onClose={onClose}>
     <View style={styles.potTransferNote}>
       <View style={styles.potTransferNoteIcon}><MaterialCommunityIcons name="swap-horizontal" size={19} color={COLORS.grape} /></View>
-      <Text style={styles.potTransferNoteText}>É uma transferência entre seus bolsos: diminui na carteira escolhida e aparece em “Meus sonhos”. Seu dinheiro total não muda.</Text>
+      <Text style={styles.potTransferNoteText}>{isDebt ? "Este pagamento será registrado como uma saída na carteira escolhida e aparecerá nas movimentações com o destino da dívida." : "É uma transferência entre seus bolsos: diminui na carteira escolhida e aparece em “Meus sonhos”. Seu dinheiro total não muda."}</Text>
     </View>
     <Text style={styles.fieldLabel}>Tirar de qual carteira?</Text>
     <View style={styles.potWalletOptions}>
@@ -1808,20 +1822,20 @@ function SavingsPotDepositModal({ visible, pot, walletBalances, dreamsBalance, o
           {selected && <View style={styles.potWalletCheck}><Feather name="check" size={14} color="#FFFFFF" /></View>}
         </Pressable>;
       })}
-      {!walletBalances.length && <View style={styles.potNoWallet}><Feather name="alert-circle" size={17} color="#B54337" /><Text style={styles.potNoWalletText}>Crie uma carteira antes de guardar dinheiro no cofrinho.</Text></View>}
+      {!walletBalances.length && <View style={styles.potNoWallet}><Feather name="alert-circle" size={17} color="#B54337" /><Text style={styles.potNoWalletText}>Crie uma carteira antes de {isDebt ? "pagar a dívida" : "guardar dinheiro na meta"}.</Text></View>}
     </View>
     <Text style={styles.fieldLabel}>Escolha um valor rápido</Text>
     <View style={styles.quickDepositRow}>
       {[100, 150, 200].map(amount => <Pressable key={amount} style={[styles.quickDeposit, selectedValue === amount && styles.quickDepositActive]} onPress={() => { setSelectedValue(amount); setCustomValue(""); }}><Text style={[styles.quickDepositText, selectedValue === amount && styles.quickDepositTextActive]}>{money(amount)}</Text></Pressable>)}
     </View>
     <Field label="Outro valor" value={customValue} onChange={(text) => { setCustomValue(text); setSelectedValue(null); }} placeholder="R$ 0,00" keyboardType="decimal-pad" money />
-    {value > remaining && remaining > 0 && <Text style={styles.potOverGoal}>Esse aporte passa a meta em {money(value - remaining)}. Pode comemorar adiantado.</Text>}
+    {exceedsGoal && <Text style={styles.potOverGoal}>{isDebt ? `O pagamento ultrapassa o saldo da dívida em ${money(value - remaining)}.` : `Esse aporte passa a meta em ${money(value - remaining)}.`}</Text>}
     {insufficientBalance && selectedWallet && <View style={styles.potInsufficient}><Feather name="alert-triangle" size={15} color="#B54337" /><Text style={styles.potInsufficientText}>Faltam {money(value - selectedWallet.balance)} na carteira {selectedWallet.wallet.name} para fazer essa transferência.</Text></View>}
     {canSave && selectedWallet && <View style={styles.potTransferPreview}>
-      <Text style={styles.potTransferPreviewLabel}>DEPOIS DA TRANSFERÊNCIA</Text>
-      <Text style={styles.potTransferPreviewText}>{selectedWallet.wallet.name} fica com {money(selectedWallet.balance - value)} · Meus sonhos vai para {money(dreamsBalance + value)}</Text>
+      <Text style={styles.potTransferPreviewLabel}>{isDebt ? "DEPOIS DO PAGAMENTO" : "DEPOIS DA TRANSFERÊNCIA"}</Text>
+      <Text style={styles.potTransferPreviewText}>{selectedWallet.wallet.name} fica com {money(selectedWallet.balance - value)} · {isDebt ? `restam ${money(remaining - value)} da dívida` : `Meus sonhos vai para ${money(dreamsBalance + value)}`}</Text>
     </View>}
-    <PrimaryButton label={`Mover ${value > 0 ? money(value) : "dinheiro"} para o sonho`} onPress={() => canSave && onSave(value, walletId)} disabled={!canSave} />
+    <PrimaryButton label={isDebt ? `Pagar ${value > 0 ? money(value) : "um valor"}` : `Mover ${value > 0 ? money(value) : "dinheiro"} para o sonho`} onPress={() => canSave && onSave(value, walletId)} disabled={!canSave} />
   </Sheet>;
 }
 
@@ -2743,6 +2757,9 @@ const createStyleDefinition = () => ({
   incomeDateBadge: { backgroundColor: "#EAF8D0" },
   dateSmall: { color: COLORS.grape, fontSize: 8, fontWeight: "900" },
   dateBig: { color: COLORS.grapeDark, fontSize: 18, fontWeight: "900" },
+  walletColorPalette: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginBottom: 20 },
+  walletColorOption: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", borderWidth: 3, borderColor: "transparent" },
+  walletColorOptionActive: { borderColor: COLORS.ink, shadowColor: COLORS.ink, shadowOpacity: 0.18, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
   walletCard: { minHeight: 162, borderRadius: 25, padding: 20, marginBottom: 14, shadowColor: COLORS.ink, shadowOpacity: 0.1, shadowRadius: 12, shadowOffset: { width: 0, height: 7 }, elevation: 4 },
   walletTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   walletEditIcon: { width: 34, height: 34, borderRadius: 12, backgroundColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.25)" },
