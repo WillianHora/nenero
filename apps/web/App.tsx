@@ -962,6 +962,14 @@ Antes de responder, confira silenciosamente:
           setModal(null);
           setEditingRecurring(null);
         }}
+        onDelete={editingRecurring ? () => {
+          const item = editingRecurring;
+          const confirmed = globalThis.confirm(`Excluir “${item.title}”?\n\n${item.kind === "income" ? "A entrada planejada" : "O gasto fixo"} será removido dos próximos meses. As movimentações já registradas serão preservadas.`);
+          if (!confirmed) return;
+          setRecurring((items) => items.filter((current) => current.id !== item.id));
+          setModal(null);
+          setEditingRecurring(null);
+        } : undefined}
       />
       <SavingsPotModal
         visible={modal === "pot"}
@@ -1553,7 +1561,7 @@ function WalletModal({ visible, item, onClose, onSave, onDelete }: { visible: bo
   </Sheet>;
 }
 
-function RecurringModal({ visible, wallets, item, onClose, onSave }: { visible: boolean; wallets: Wallet[]; item: Recurring | null; onClose: () => void; onSave: (item: Omit<Recurring, "id" | "active">) => void }) {
+function RecurringModal({ visible, wallets, item, onClose, onSave, onDelete }: { visible: boolean; wallets: Wallet[]; item: Recurring | null; onClose: () => void; onSave: (item: Omit<Recurring, "id" | "active">) => void; onDelete?: () => void }) {
   const [kind, setKind] = useState<EntryKind>("expense"); const [title, setTitle] = useState(""); const [value, setValue] = useState(""); const [day, setDay] = useState(""); const [category, setCategory] = useState("Casa"); const [walletId, setWalletId] = useState(wallets[0]?.id ?? "");
   const activeCategories = categoriesByKind[kind];
   useEffect(() => {
@@ -1569,7 +1577,7 @@ function RecurringModal({ visible, wallets, item, onClose, onSave }: { visible: 
   }, [visible, item, wallets]);
   const changeKind = (nextKind: EntryKind) => { setKind(nextKind); setCategory((current) => categoriesByKind[nextKind].includes(current) ? current : categoriesByKind[nextKind][0]!); };
   const save = () => {
-    const parsed = Number(value.replace(",", ".")); const parsedDay = Number(day);
+    const parsed = parseMoneyInput(value); const parsedDay = Number(day);
     if (title.trim() && parsed > 0 && parsedDay >= 1 && parsedDay <= 31 && walletId) {
       onSave({ title: title.trim(), value: parsed, day: parsedDay, category, kind, walletId });
       setTitle(""); setValue(""); setDay("");
@@ -1589,6 +1597,7 @@ function RecurringModal({ visible, wallets, item, onClose, onSave }: { visible: 
       <View style={styles.walletOptions}>{wallets.map(wallet => <Pressable key={wallet.id} style={[styles.walletOption, walletId === wallet.id && styles.walletOptionActive]} onPress={() => setWalletId(wallet.id)}><View style={[styles.colorDot, { backgroundColor: wallet.color }]} /><Text style={styles.walletOptionText}>{wallet.name}</Text>{walletId === wallet.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
       {kind === "income" && <View style={styles.autoPostNote}><Feather name="zap" size={16} color={COLORS.success} /><Text style={styles.autoPostText}>O valor será contabilizado na data programada, mesmo que o Nenero fique fechado naquele dia.</Text></View>}
     <PrimaryButton label={item ? "Salvar alterações" : kind === "income" ? "Programar entrada" : "Salvar gasto fixo"} onPress={save} disabled={!title.trim() || !value || !day || !walletId} />
+    {item && onDelete && <Pressable style={styles.deleteEntryButton} onPress={onDelete}><Feather name="trash-2" size={17} color={COLORS.danger} /><Text style={styles.deleteEntryButtonText}>Excluir {item.kind === "income" ? "entrada planejada" : "gasto fixo"}</Text></Pressable>}
   </Sheet>;
 }
 
