@@ -55,7 +55,7 @@ type CreditCard = {
   paymentWalletId: string;
   paidInvoiceKeys: string[];
 };
-type FinancialSettings = { salaryDay: number; projectedMonthlyIncome: number };
+type FinancialSettings = { salaryDay: number; projectedMonthlyIncome: number; primaryIncomeId?: string };
 type CardInvoice = {
   key: string;
   cardId: string;
@@ -523,7 +523,17 @@ function AppContent() {
   const monthlyExpenses = entries.filter(entry => entry.kind === "expense" && !entry.invoicePaymentKey && isCurrentMonth(entry.createdAt)).reduce((sum, entry) => sum + entry.value, 0);
   const sortedEntries = useMemo(() => [...entries].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [entries]);
   const cardInvoices = useMemo(() => getCardInvoices(creditCards, entries), [creditCards, entries]);
-  const salaryCycle = useMemo(() => getNextSalaryCycle(financialSettings), [financialSettings]);
+  const activePlannedIncomes = useMemo(() => recurring.filter((item) => item.active && item.kind === "income"), [recurring]);
+  const primaryPlannedIncome = useMemo(() => activePlannedIncomes.find((item) => item.id === financialSettings.primaryIncomeId)
+    ?? activePlannedIncomes.find((item) => item.category === "Salário")
+    ?? activePlannedIncomes[0], [activePlannedIncomes, financialSettings.primaryIncomeId]);
+  const projectedPlannedIncome = useMemo(() => activePlannedIncomes.reduce((sum, item) => sum + item.value, 0), [activePlannedIncomes]);
+  const projectionSettings = useMemo<FinancialSettings>(() => ({
+    salaryDay: primaryPlannedIncome?.day ?? 5,
+    projectedMonthlyIncome: projectedPlannedIncome,
+    primaryIncomeId: primaryPlannedIncome?.id,
+  }), [primaryPlannedIncome?.day, primaryPlannedIncome?.id, projectedPlannedIncome]);
+  const salaryCycle = useMemo(() => getNextSalaryCycle(projectionSettings), [projectionSettings]);
   const cycleInvoices = cardInvoices.filter((invoice) => {
     const dueDate = new Date(invoice.dueDate);
     return !invoice.paid && dueDate >= salaryCycle.start && dueDate <= salaryCycle.end;
@@ -541,7 +551,7 @@ function AppContent() {
     }
     return sum + item.value * occurrences;
   }, 0);
-  const freeToSpend = financialSettings.projectedMonthlyIncome - cycleInvoiceTotal - cycleCashBills;
+  const freeToSpend = projectionSettings.projectedMonthlyIncome - cycleInvoiceTotal - cycleCashBills;
 
   const runAnalysis = async (openDetails = false) => {
     if (!goal.trim()) { setModal("profile"); return; }
@@ -918,7 +928,7 @@ Antes de responder, confira silenciosamente:
     }]);
     setSavingsPots([]);
     setCreditCards([]);
-    setFinancialSettings({ salaryDay: incomeDay, projectedMonthlyIncome: monthlyIncome });
+    setFinancialSettings({ salaryDay: incomeDay, projectedMonthlyIncome: monthlyIncome, primaryIncomeId: recurringIncomeId });
     setGoal(financialGoal);
     setAnalysis(null);
   }} />;
@@ -946,7 +956,7 @@ Antes de responder, confira silenciosamente:
               recurringTotal={recurringTotal}
               monthlyIncome={monthlyIncome}
               monthlyExpenses={monthlyExpenses}
-              financialSettings={financialSettings}
+              financialSettings={projectionSettings}
               salaryCycle={salaryCycle}
               cycleInvoices={cycleInvoices}
               cycleCashBills={cycleCashBills}
@@ -1091,7 +1101,19 @@ Antes de responder, confira silenciosamente:
           setEditingCard(null);
         } : undefined}
       />
-      <FinancialSettingsModal visible={modal === "financialSettings"} settings={financialSettings} onClose={() => setModal(null)} onSave={(settings) => { setFinancialSettings(settings); setModal(null); }} />
+      <FinancialSettingsModal
+        visible={modal === "financialSettings"}
+        incomes={activePlannedIncomes}
+        selectedIncomeId={primaryPlannedIncome?.id}
+        onClose={() => setModal(null)}
+        onOpenPlanned={() => { setModal(null); setTab("recorrentes"); }}
+        onSave={(primaryIncomeId) => {
+          const primaryIncome = activePlannedIncomes.find((item) => item.id === primaryIncomeId);
+          if (!primaryIncome) return;
+          setFinancialSettings({ salaryDay: primaryIncome.day, projectedMonthlyIncome: projectedPlannedIncome, primaryIncomeId });
+          setModal(null);
+        }}
+      />
       <RecurringModal
         visible={modal === "recurring"}
         wallets={wallets}
@@ -1300,11 +1322,11 @@ function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, m
     {financialSettings.projectedMonthlyIncome > 0 ? <>
       <View style={styles.salaryCycleTrack}><View style={[styles.salaryCycleTrackFill, { width: `${Math.min(100, Math.max(0, (Math.max(0, freeToSpend) / financialSettings.projectedMonthlyIncome) * 100))}%` }]} /></View>
       <View style={styles.salaryCycleBreakdown}>
-        <View style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>Salário previsto</Text><Text style={styles.salaryCycleIncome}>+ {money(financialSettings.projectedMonthlyIncome)}</Text></View>
+        <View style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>Entradas planejadas</Text><Text style={styles.salaryCycleIncome}>+ {money(financialSettings.projectedMonthlyIncome)}</Text></View>
         <View style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>{cycleInvoices.length === 1 ? "Próxima fatura" : `${cycleInvoices.length} próximas faturas`}</Text><Text style={styles.salaryCycleExpense}>− {money(cycleInvoiceTotal)}</Text></View>
         <View style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>Contas em dinheiro</Text><Text style={styles.salaryCycleExpense}>− {money(cycleCashBills)}</Text></View>
       </View>
-    </> : <Pressable style={styles.salaryCycleEmpty} onPress={onConfigureCycle}><Text style={styles.salaryCycleEmptyText}>Informe salário e dia de recebimento para ativar a projeção.</Text><Feather name="arrow-right" size={15} color={COLORS.lime} /></Pressable>}
+    </> : <Pressable style={styles.salaryCycleEmpty} onPress={onConfigureCycle}><Text style={styles.salaryCycleEmptyText}>Cadastre uma entrada mensal em Planejados para ativar a projeção.</Text><Feather name="arrow-right" size={15} color={COLORS.lime} /></Pressable>}
   </LinearGradient>;
   return (
     <>
@@ -1823,22 +1845,24 @@ function CreditCardModal({ visible, wallets, item, onClose, onSave, onDelete }: 
   </Sheet>;
 }
 
-function FinancialSettingsModal({ visible, settings, onClose, onSave }: { visible: boolean; settings: FinancialSettings; onClose: () => void; onSave: (settings: FinancialSettings) => void }) {
-  const [salaryDay, setSalaryDay] = useState("");
-  const [income, setIncome] = useState("");
+function FinancialSettingsModal({ visible, incomes, selectedIncomeId, onClose, onOpenPlanned, onSave }: { visible: boolean; incomes: Recurring[]; selectedIncomeId?: string; onClose: () => void; onOpenPlanned: () => void; onSave: (primaryIncomeId: string) => void }) {
+  const [primaryIncomeId, setPrimaryIncomeId] = useState("");
   useEffect(() => {
     if (!visible) return;
-    setSalaryDay(String(settings.salaryDay));
-    setIncome(settings.projectedMonthlyIncome ? formatMoneyInput(String(settings.projectedMonthlyIncome).replace(".", ",")) : "");
-  }, [visible, settings]);
-  const parsedDay = Number(salaryDay);
-  const parsedIncome = parseMoneyInput(income);
-  const valid = parsedDay >= 1 && parsedDay <= 31 && parsedIncome > 0;
-  return <Sheet visible={visible} title="Ciclo do salário" subtitle="O salário futuro serve para projeção e não aumenta o saldo de hoje." onClose={onClose}>
-    <View style={styles.cycleExplain}><MaterialCommunityIcons name="calendar-outline" size={24} color={COLORS.grape} /><Text style={styles.cycleExplainText}>O Nenero reservará, para cada salário, as faturas e contas com vencimento até o recebimento seguinte.</Text></View>
-    <Field label="Salário líquido previsto" value={income} onChange={setIncome} placeholder="R$ 5.000,00" keyboardType="decimal-pad" money />
-    <Field label="Dia em que o salário cai" value={salaryDay} onChange={setSalaryDay} placeholder="Ex.: 5" keyboardType="number-pad" />
-    <PrimaryButton label="Salvar ciclo" onPress={() => valid && onSave({ salaryDay: parsedDay, projectedMonthlyIncome: parsedIncome })} disabled={!valid} />
+    setPrimaryIncomeId(selectedIncomeId ?? incomes[0]?.id ?? "");
+  }, [visible, selectedIncomeId, incomes]);
+  const totalIncome = incomes.reduce((sum, item) => sum + item.value, 0);
+  return <Sheet visible={visible} title="Ciclo das entradas" subtitle="Os valores vêm automaticamente da tela Planejados." onClose={onClose}>
+    <View style={styles.cycleExplain}><MaterialCommunityIcons name="calendar-outline" size={24} color={COLORS.grape} /><Text style={styles.cycleExplainText}>Todas as entradas mensais ativas entram na projeção. A entrada principal abaixo define quando um ciclo termina e o próximo começa.</Text></View>
+    {incomes.length ? <>
+      <View style={styles.cycleIncomeSummary}><Text style={styles.cycleIncomeSummaryLabel}>Total mensal planejado</Text><Text style={styles.cycleIncomeSummaryValue}>{money(totalIncome)}</Text></View>
+      <Text style={styles.fieldLabel}>Entrada principal do ciclo</Text>
+      <View style={styles.walletOptions}>{incomes.map((income) => <Pressable key={income.id} accessibilityRole="radio" accessibilityState={{ checked: primaryIncomeId === income.id }} style={[styles.walletOption, primaryIncomeId === income.id && styles.walletOptionActive]} onPress={() => setPrimaryIncomeId(income.id)}><View style={styles.cycleIncomeDay}><Text style={styles.cycleIncomeDayNumber}>{income.day}</Text><Text style={styles.cycleIncomeDayLabel}>DIA</Text></View><View style={styles.flex}><Text style={styles.walletOptionText}>{income.title}</Text><Text style={styles.cycleIncomeValue}>{money(income.value)} por mês</Text></View>{primaryIncomeId === income.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
+      <PrimaryButton label="Salvar ciclo" onPress={() => primaryIncomeId && onSave(primaryIncomeId)} disabled={!primaryIncomeId} />
+    </> : <>
+      <View style={styles.cycleEmptyState}><View style={styles.cycleEmptyIcon}><Feather name="calendar" size={22} color={COLORS.grape} /></View><Text style={styles.cycleEmptyTitle}>Nenhuma entrada planejada</Text><Text style={styles.cycleEmptyCopy}>Cadastre seu salário ou outra renda mensal. Depois disso, a projeção será calculada sem você precisar digitar o valor novamente.</Text></View>
+      <PrimaryButton label="Ir para Planejados" onPress={onOpenPlanned} />
+    </>}
   </Sheet>;
 }
 
@@ -2712,6 +2736,17 @@ const createStyleDefinition = () => ({
   salaryCycleExpense: { color: "#FFAA9F", fontSize: 10, fontWeight: "900" },
   salaryCycleEmpty: { minHeight: 44, borderRadius: 14, paddingHorizontal: 12, backgroundColor: "rgba(255,255,255,0.1)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", flexDirection: "row", alignItems: "center", gap: 8, marginTop: 14 },
   salaryCycleEmptyText: { flex: 1, color: "#F2ECFF", fontSize: 9, lineHeight: 13, fontWeight: "800" },
+  cycleIncomeSummary: { backgroundColor: COLORS.surfaceMuted, borderRadius: 16, padding: 15, marginBottom: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  cycleIncomeSummaryLabel: { color: COLORS.muted, fontSize: 12, fontWeight: "700" },
+  cycleIncomeSummaryValue: { color: COLORS.success, fontSize: 17, fontWeight: "900" },
+  cycleIncomeDay: { width: 42, height: 42, borderRadius: 13, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center" },
+  cycleIncomeDayNumber: { color: COLORS.grape, fontSize: 15, lineHeight: 17, fontWeight: "900" },
+  cycleIncomeDayLabel: { color: COLORS.grape, fontSize: 7, fontWeight: "900", letterSpacing: 0.7 },
+  cycleIncomeValue: { color: COLORS.muted, fontSize: 10, fontWeight: "600", marginTop: 3 },
+  cycleEmptyState: { alignItems: "center", paddingVertical: 18, paddingHorizontal: 12 },
+  cycleEmptyIcon: { width: 52, height: 52, borderRadius: 18, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center", marginBottom: 12 },
+  cycleEmptyTitle: { color: COLORS.ink, fontSize: 16, fontWeight: "900" },
+  cycleEmptyCopy: { color: COLORS.muted, fontSize: 12, lineHeight: 18, textAlign: "center", marginTop: 7 },
   metricsRow: { flexDirection: "row", gap: 12, marginTop: 14 },
   metricCard: { flex: 1, padding: 16, borderRadius: 20 },
   metricIncomeCard: { backgroundColor: COLORS.successSurface, borderWidth: 1, borderColor: COLORS.successBorder },
