@@ -3,11 +3,14 @@ import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import type { Session } from "@supabase/supabase-js";
 import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AccessibilityInfo,
   ActivityIndicator,
+  Animated,
   KeyboardAvoidingView,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -1234,40 +1237,90 @@ function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, m
     : analysis?.status === "attention"
       ? IS_DARK ? ["#51327B", "#2D1E58"] : ["#8550C8", "#5B32C8"]
       : IS_DARK ? ["#4B2E86", "#27194F"] : ["#7951ED", "#5B32C8"];
+  const [activeHeroCard, setActiveHeroCard] = useState<0 | 1>(0);
+  const activeHeroCardRef = useRef<0 | 1>(0);
+  const heroPan = useRef(new Animated.ValueXY()).current;
+  const heroAnimating = useRef(false);
+  const reduceMotion = useRef(false);
+  const cycleInvoiceTotal = cycleInvoices.reduce((sum, invoice) => sum + invoice.total, 0);
+  const revealProgress = heroPan.x.interpolate({ inputRange: [-180, 0, 180], outputRange: [1, 0, 1], extrapolate: "clamp" });
+
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then((enabled) => { reduceMotion.current = enabled; });
+    const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", (enabled) => { reduceMotion.current = enabled; });
+    return () => subscription.remove();
+  }, []);
+
+  function changeHeroCard(direction: number, target?: 0 | 1) {
+    if (heroAnimating.current || target === activeHeroCardRef.current) return;
+    const nextCard = target ?? (activeHeroCardRef.current === 0 ? 1 : 0);
+    if (reduceMotion.current) {
+      heroPan.setValue({ x: 0, y: 0 });
+      activeHeroCardRef.current = nextCard;
+      setActiveHeroCard(nextCard);
+      return;
+    }
+    heroAnimating.current = true;
+    Animated.timing(heroPan, { toValue: { x: direction * 520, y: 0 }, duration: 220, useNativeDriver: true }).start(() => {
+      activeHeroCardRef.current = nextCard;
+      setActiveHeroCard(nextCard);
+      heroPan.setValue({ x: direction * -52, y: 0 });
+      Animated.spring(heroPan, { toValue: { x: 0, y: 0 }, friction: 8, tension: 82, useNativeDriver: true }).start(() => { heroAnimating.current = false; });
+    });
+  }
+
+  const heroPanResponder = useRef(PanResponder.create({
+    onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dx) > 10 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+    onPanResponderMove: (_event, gesture) => heroPan.setValue({ x: gesture.dx, y: 0 }),
+    onPanResponderRelease: (_event, gesture) => {
+      if (Math.abs(gesture.dx) > 62 || Math.abs(gesture.vx) > 0.45) changeHeroCard(gesture.dx >= 0 ? 1 : -1);
+      else Animated.spring(heroPan, { toValue: { x: 0, y: 0 }, friction: 8, tension: 90, useNativeDriver: true }).start();
+    },
+    onPanResponderTerminate: () => Animated.spring(heroPan, { toValue: { x: 0, y: 0 }, friction: 8, tension: 90, useNativeDriver: true }).start(),
+  })).current;
+
+  const balanceHeroCard = <LinearGradient colors={balanceGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.balanceCard}>
+    <View style={styles.balanceGlow} />
+    <View style={styles.balanceHeader}><Text style={styles.balanceLabel}>Saldo nas carteiras</Text></View>
+    <Text style={styles.balanceValue}>{money(balance)}</Text>
+    <View style={styles.savedTotalLine}><MaterialCommunityIcons name="piggy-bank-outline" size={16} color={COLORS.lime} /><Text style={styles.savedTotalLabel}>Poupado:</Text><Text style={styles.savedTotalValue}>{money(savedAmount)}</Text></View>
+    <Text style={styles.balanceCopy}>{balance >= 0 ? "Tá bonito. E o melhor: tá organizado." : "Respira. Vamos ajeitar isso juntos."}</Text>
+    <Pressable style={styles.whiteButton} onPress={onAdd}><Feather name="plus" size={18} color="#532CB8" /><Text style={styles.whiteButtonText}>Novo lançamento</Text></Pressable>
+  </LinearGradient>;
+
+  const cycleHeroCard = <View style={styles.salaryCycleCard}>
+    <View style={styles.salaryCycleHeader}>
+      <View><Text style={styles.salaryCycleEyebrow}>PRÓXIMO CICLO DO SALÁRIO</Text><Text style={styles.salaryCycleDate}>{salaryCycle.start.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })} → {salaryCycle.end.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })}</Text></View>
+      <Pressable style={styles.salaryCycleSettings} onPress={onConfigureCycle} accessibilityLabel="Configurar ciclo do salário"><Feather name="settings" size={16} color={COLORS.grape} /></Pressable>
+    </View>
+    <Text style={styles.salaryCycleLabel}>Livre para gastar</Text>
+    <Text style={[styles.salaryCycleValue, freeToSpend < 0 && styles.salaryCycleValueDanger]}>{money(freeToSpend)}</Text>
+    {financialSettings.projectedMonthlyIncome > 0 ? <>
+      <View style={styles.salaryCycleTrack}><View style={[styles.salaryCycleTrackFill, { width: `${Math.min(100, Math.max(0, (Math.max(0, freeToSpend) / financialSettings.projectedMonthlyIncome) * 100))}%` }]} /></View>
+      <View style={styles.salaryCycleBreakdown}>
+        <View style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>Salário previsto</Text><Text style={styles.salaryCycleIncome}>+ {money(financialSettings.projectedMonthlyIncome)}</Text></View>
+        <View style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>{cycleInvoices.length === 1 ? "Próxima fatura" : `${cycleInvoices.length} próximas faturas`}</Text><Text style={styles.salaryCycleExpense}>− {money(cycleInvoiceTotal)}</Text></View>
+        <View style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>Contas em dinheiro</Text><Text style={styles.salaryCycleExpense}>− {money(cycleCashBills)}</Text></View>
+      </View>
+    </> : <Pressable style={styles.salaryCycleEmpty} onPress={onConfigureCycle}><Text style={styles.salaryCycleEmptyText}>Informe salário e dia de recebimento para ativar a projeção.</Text><Feather name="arrow-right" size={15} color={COLORS.grape} /></Pressable>}
+  </View>;
   return (
     <>
       <View style={styles.helloRow}>
         <View style={styles.flex}><Text style={styles.eyebrow}>{today}</Text><Text style={styles.h1} numberOfLines={2}>Oi, {userName}!</Text></View>
       </View>
 
-      <LinearGradient colors={balanceGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.balanceCard}>
-        <View style={styles.balanceGlow} />
-        <View style={styles.balanceHeader}>
-          <Text style={styles.balanceLabel}>Saldo nas carteiras</Text>
-        </View>
-        <Text style={styles.balanceValue}>{money(balance)}</Text>
-        <View style={styles.savedTotalLine}><MaterialCommunityIcons name="piggy-bank-outline" size={16} color={COLORS.lime} /><Text style={styles.savedTotalLabel}>Poupado:</Text><Text style={styles.savedTotalValue}>{money(savedAmount)}</Text></View>
-        <Text style={styles.balanceCopy}>{balance >= 0 ? "Tá bonito. E o melhor: tá organizado." : "Respira. Vamos ajeitar isso juntos."}</Text>
-        <Pressable style={styles.whiteButton} onPress={onAdd}>
-          <Feather name="plus" size={18} color="#532CB8" />
-          <Text style={styles.whiteButtonText}>Novo lançamento</Text>
-        </Pressable>
-      </LinearGradient>
-
-      <View style={styles.salaryCycleCard}>
-        <View style={styles.salaryCycleHeader}>
-          <View><Text style={styles.salaryCycleEyebrow}>PRÓXIMO CICLO DO SALÁRIO</Text><Text style={styles.salaryCycleDate}>{salaryCycle.start.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })} → {salaryCycle.end.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })}</Text></View>
-          <Pressable style={styles.salaryCycleSettings} onPress={onConfigureCycle} accessibilityLabel="Configurar ciclo do salário"><Feather name="settings" size={16} color={COLORS.grape} /></Pressable>
-        </View>
-        <Text style={styles.salaryCycleLabel}>Livre para gastar</Text>
-        <Text style={[styles.salaryCycleValue, freeToSpend < 0 && styles.salaryCycleValueDanger]}>{money(freeToSpend)}</Text>
-        <View style={styles.salaryCycleTrack}><View style={[styles.salaryCycleTrackFill, { width: `${Math.min(100, Math.max(0, financialSettings.projectedMonthlyIncome > 0 ? (Math.max(0, freeToSpend) / financialSettings.projectedMonthlyIncome) * 100 : 0))}%` }]} /></View>
-        <View style={styles.salaryCycleBreakdown}>
-          <View style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>Salário previsto</Text><Text style={styles.salaryCycleIncome}>+ {money(financialSettings.projectedMonthlyIncome)}</Text></View>
-          {cycleInvoices.map((invoice) => <View key={invoice.key} style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>Fatura {creditCards.find((card) => card.id === invoice.cardId)?.name ?? "cartão"}</Text><Text style={styles.salaryCycleExpense}>− {money(invoice.total)}</Text></View>)}
-          <View style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>Contas em dinheiro</Text><Text style={styles.salaryCycleExpense}>− {money(cycleCashBills)}</Text></View>
-        </View>
-        {!financialSettings.projectedMonthlyIncome && <Pressable style={styles.salaryCycleEmpty} onPress={onConfigureCycle}><Text style={styles.salaryCycleEmptyText}>Informe salário e dia de recebimento para ativar a projeção.</Text><Feather name="arrow-right" size={15} color={COLORS.grape} /></Pressable>}
+      <View style={styles.heroDeck} accessibilityLabel="Resumo financeiro em dois cartões">
+        <Animated.View pointerEvents="none" style={[styles.heroDeckCard, styles.heroDeckBack, { opacity: revealProgress.interpolate({ inputRange: [0, 1], outputRange: [0.86, 1] }), transform: [{ translateY: revealProgress.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }, { scale: revealProgress.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) }, { rotate: "1.2deg" }] }]}>
+          {activeHeroCard === 0 ? cycleHeroCard : balanceHeroCard}
+        </Animated.View>
+        <Animated.View {...heroPanResponder.panHandlers} style={[styles.heroDeckCard, styles.heroDeckFront, { transform: [{ translateX: heroPan.x }, { rotate: heroPan.x.interpolate({ inputRange: [-260, 0, 260], outputRange: ["-7deg", "0deg", "7deg"], extrapolate: "clamp" }) }] }]}>
+          {activeHeroCard === 0 ? balanceHeroCard : cycleHeroCard}
+        </Animated.View>
+      </View>
+      <View style={styles.heroDeckNavigation}>
+        <View style={styles.heroDeckDots}>{([0, 1] as const).map((index) => <Pressable key={index} accessibilityRole="button" accessibilityLabel={index === 0 ? "Mostrar saldo" : "Mostrar próximo ciclo do salário"} accessibilityState={{ selected: activeHeroCard === index }} style={[styles.heroDeckDotButton, activeHeroCard === index && styles.heroDeckDotButtonActive]} onPress={() => changeHeroCard(index > activeHeroCard ? -1 : 1, index)} />)}</View>
+        <View style={styles.heroDeckHint}><Feather name="move" size={12} color={COLORS.muted} /><Text style={styles.heroDeckHintText}>{activeHeroCard === 0 ? "Deslize para ver as faturas" : "Deslize para voltar ao saldo"}</Text></View>
       </View>
 
       <View style={styles.metricsRow}>
@@ -2609,7 +2662,17 @@ const createStyleDefinition = () => ({
   moodAttentionText: { color: COLORS.warning },
   moodDanger: { backgroundColor: COLORS.dangerSurface },
   moodDangerText: { color: COLORS.danger },
-  balanceCard: { minHeight: 245, borderRadius: 28, padding: 24, overflow: "hidden", shadowColor: COLORS.grapeDark, shadowOpacity: 0.22, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 9 },
+  heroDeck: { height: 270, position: "relative", marginHorizontal: 2 },
+  heroDeckCard: { position: "absolute", top: 0, left: 0, right: 0 },
+  heroDeckBack: { zIndex: 1 },
+  heroDeckFront: { zIndex: 2 },
+  heroDeckNavigation: { minHeight: 28, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 5, marginTop: 1 },
+  heroDeckDots: { flexDirection: "row", alignItems: "center", gap: 6 },
+  heroDeckDotButton: { width: 7, height: 7, borderRadius: 4, backgroundColor: COLORS.lineStrong },
+  heroDeckDotButtonActive: { width: 20, backgroundColor: COLORS.grape },
+  heroDeckHint: { flexDirection: "row", alignItems: "center", gap: 5 },
+  heroDeckHintText: { color: COLORS.muted, fontSize: 8, fontWeight: "700" },
+  balanceCard: { minHeight: 252, borderRadius: 28, padding: 24, overflow: "hidden", shadowColor: COLORS.grapeDark, shadowOpacity: 0.22, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 9 },
   balanceGlow: { position: "absolute", width: 190, height: 190, borderRadius: 95, backgroundColor: "rgba(201,244,90,0.15)", top: -85, right: -45 },
   balanceHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   balanceLabel: { color: "rgba(255,255,255,0.78)", fontSize: 13, fontWeight: "700" },
@@ -2625,7 +2688,7 @@ const createStyleDefinition = () => ({
   balanceAnalysisSummary: { color: "rgba(255,255,255,0.78)", fontSize: 11, lineHeight: 16, marginTop: 4 },
   whiteButton: { alignSelf: "flex-start", backgroundColor: "white", flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 14 },
   whiteButtonText: { color: "#532CB8", fontWeight: "800", fontSize: 13 },
-  salaryCycleCard: { backgroundColor: COLORS.surface, borderRadius: 24, borderWidth: 1, borderColor: COLORS.accentBorder, padding: 18, marginTop: 14, shadowColor: COLORS.grapeDark, shadowOpacity: 0.08, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 3 },
+  salaryCycleCard: { minHeight: 252, backgroundColor: COLORS.surface, borderRadius: 28, borderWidth: 1, borderColor: COLORS.accentBorder, padding: 18, shadowColor: COLORS.grapeDark, shadowOpacity: 0.12, shadowRadius: 18, shadowOffset: { width: 0, height: 9 }, elevation: 4 },
   salaryCycleHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
   salaryCycleEyebrow: { color: COLORS.grape, fontSize: 8, fontWeight: "900", letterSpacing: 1 },
   salaryCycleDate: { color: COLORS.muted, fontSize: 10, fontWeight: "700", textTransform: "lowercase", marginTop: 4 },
