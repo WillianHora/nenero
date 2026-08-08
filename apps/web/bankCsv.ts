@@ -18,6 +18,7 @@ export type ParsedBankStatement = {
   accountLabel?: string;
   transactions: ParsedBankTransaction[];
   ignoredRows: number;
+  validationMessage?: string;
 };
 
 const normalize = (value: string) => value
@@ -66,7 +67,7 @@ const parseBankDate = (value: string) => {
   return null;
 };
 
-const parseBankMoney = (value: string) => {
+export const parseBankMoney = (value: string) => {
   let cleaned = value.trim().replace(/[R$\s"]/g, "");
   const negativeByParentheses = cleaned.startsWith("(") && cleaned.endsWith(")");
   cleaned = cleaned.replace(/[()]/g, "");
@@ -127,7 +128,7 @@ const transactionTitle = (history: string, description: string) => {
   return displayName(history || description || "Movimentação bancária");
 };
 
-const suggestedCategory = (description: string, kind: BankMovementKind) => {
+export const suggestedCategory = (description: string, kind: BankMovementKind) => {
   const text = normalize(description);
   if (kind === "income") {
     if (text.includes("salario")) return "Salário";
@@ -165,7 +166,7 @@ const transferReview = (description: string) => {
   return null;
 };
 
-const stableHash = (value: string) => {
+export const stableHash = (value: string) => {
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) {
     hash ^= value.charCodeAt(index);
@@ -188,6 +189,8 @@ const findHeader = (lines: string[]) => {
         header.includes("credito")
       ));
       const hasDescription = headers.some((header) => (
+        header === "title" ||
+        header === "titulo" ||
         header.includes("descricao") ||
         header.includes("historico") ||
         header.includes("detalhes") ||
@@ -219,7 +222,7 @@ export function parseBankCsv(content: string, fileName: string): ParsedBankState
   const historyIndex = header.headers.findIndex((column) => (
     column === "historico" || column === "lancamento" || column === "historical"
   ));
-  const descriptionIndex = findColumn(header.headers, ["descricao", "detalhes", "memo"]);
+  const descriptionIndex = findColumn(header.headers, ["descricao", "detalhes", "memo", "title", "titulo"]);
   const identifierIndex = findColumn(header.headers, ["identificador", "transaction id", "id transacao"]);
   const balanceIndex = findColumn(header.headers, ["saldo"]);
   const accountLine = lines
@@ -229,7 +232,12 @@ export function parseBankCsv(content: string, fileName: string): ParsedBankState
   const accountLabel = accountLine?.[1]?.trim() || undefined;
   const normalizedFileName = normalize(fileName);
   const normalizedContentStart = normalize(lines.slice(0, Math.min(lines.length, 8)).join(" "));
-  const bankName = (
+  const creditCardInvoice = normalizedFileName.includes("fatura") || (
+    header.headers.includes("title") && header.headers.includes("amount")
+  );
+  const bankName = creditCardInvoice
+    ? "Nubank · Fatura"
+    : (
     identifierIndex >= 0 ||
     normalizedFileName.startsWith("nu_") ||
     normalizedContentStart.includes("nubank")
@@ -261,10 +269,15 @@ export function parseBankCsv(content: string, fileName: string): ParsedBankState
     const history = historyIndex >= 0 ? cells[historyIndex]?.trim() ?? "" : "";
     const description = descriptionIndex >= 0 ? cells[descriptionIndex]?.trim() ?? "" : "";
     const originalDescription = [history, description].filter(Boolean).join(" · ");
-    const kind: BankMovementKind = signedValue < 0 ? "expense" : "income";
+    const kind: BankMovementKind = creditCardInvoice
+      ? (signedValue > 0 ? "expense" : "income")
+      : (signedValue < 0 ? "expense" : "income");
     const identifier = identifierIndex >= 0 ? cells[identifierIndex]?.trim() || undefined : undefined;
     const balance = balanceIndex >= 0 ? cells[balanceIndex]?.trim() ?? "" : "";
-    const reviewReason = transferReview(originalDescription);
+    const invoicePayment = creditCardInvoice && /pagamento (recebido|on ?line|de fatura)/i.test(originalDescription);
+    const reviewReason = invoicePayment
+      ? "Pagamento da fatura: evite importar se ele já aparece no extrato da conta"
+      : transferReview(originalDescription);
     const signature = [
       bankName,
       accountLabel ?? "",
@@ -278,7 +291,7 @@ export function parseBankCsv(content: string, fileName: string): ParsedBankState
     occurrenceBySignature.set(signature, occurrence);
 
     transactions.push({
-      importId: `bank-csv-${stableHash(`${signature}|${occurrence}`)}`,
+      importId: `${creditCardInvoice ? "card-csv" : "bank-csv"}-${stableHash(`${signature}|${occurrence}`)}`,
       identifier,
       title: transactionTitle(history, description),
       originalDescription,

@@ -20,6 +20,7 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { parseBankCsv, type ParsedBankTransaction } from "./bankCsv";
+import { parseInterInvoicePdf } from "./cardInvoicePdf";
 import { supabase, supabaseConfigured } from "./lib/supabase";
 
 type Tab = "inicio" | "movimentos" | "recorrentes" | "cofrinhos" | "carteiras" | "ferramentas";
@@ -1875,7 +1876,7 @@ function BankImportModal({ visible, wallets, existingEntries, onClose, onImport 
   onImport: (entries: Omit<Entry, "id">[]) => void;
 }) {
   const [drafts, setDrafts] = useState<BankImportDraft[]>([]);
-  const [fileInfo, setFileInfo] = useState<{ fileName: string; bankName: string; ignoredRows: number } | null>(null);
+  const [fileInfo, setFileInfo] = useState<{ fileName: string; bankName: string; ignoredRows: number; validationMessage?: string } | null>(null);
   const [walletId, setWalletId] = useState("");
   const [reading, setReading] = useState(false);
   const [error, setError] = useState("");
@@ -1890,20 +1891,23 @@ function BankImportModal({ visible, wallets, existingEntries, onClose, onImport 
     setExpandedId(null);
   }, [visible]);
   const loadFile = async (file: File) => {
-    if (file.size > 8 * 1024 * 1024) throw new Error("Esse CSV passou de 8 MB. Exporte um período menor e tente novamente.");
-    const statement = parseBankCsv(await file.text(), file.name);
+    if (file.size > 8 * 1024 * 1024) throw new Error("Esse arquivo passou de 8 MB. Exporte um período menor e tente novamente.");
+    const isPdf = file.type === "application/pdf" || file.name.toLocaleLowerCase().endsWith(".pdf");
+    const statement = isPdf
+      ? await parseInterInvoicePdf(await file.arrayBuffer(), file.name)
+      : parseBankCsv(await file.text(), file.name);
     const importedIds = new Set(existingEntries.map((entry) => entry.importId).filter(Boolean));
     setDrafts(statement.transactions.map((transaction) => {
       const duplicate = importedIds.has(transaction.importId);
       return { ...transaction, duplicate, selected: !duplicate && !transaction.transferLike };
     }));
-    setFileInfo({ fileName: file.name, bankName: statement.bankName, ignoredRows: statement.ignoredRows });
+    setFileInfo({ fileName: file.name, bankName: statement.bankName, ignoredRows: statement.ignoredRows, validationMessage: statement.validationMessage });
   };
   const selectFile = () => {
     setError("");
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".csv,text/csv,text/plain";
+    input.accept = ".csv,.pdf,text/csv,text/plain,application/pdf";
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
@@ -1929,18 +1933,19 @@ function BankImportModal({ visible, wallets, existingEntries, onClose, onImport 
     if (!fileInfo || !walletId || !selected.length || invalid) return;
     onImport(selected.map((draft) => ({ title: draft.title.trim(), value: draft.value, kind: draft.kind, category: draft.category, walletId, createdAt: draft.createdAt, importId: draft.importId, importSource: fileInfo.bankName })));
   };
-  return <Sheet visible={visible} title="Importar extrato" subtitle="O banco entrega as linhas. Você dá a palavra final." onClose={onClose}>
+  return <Sheet visible={visible} title="Importar extrato ou fatura" subtitle="O banco entrega as linhas. Você dá a palavra final." onClose={onClose}>
     {!fileInfo ? <>
       <View style={styles.bankImportHero}>
         <View style={styles.bankImportHeroIcon}><MaterialCommunityIcons name="file-table-outline" size={30} color={COLORS.grape} /></View>
-        <Text style={styles.bankImportHeroTitle}>Traga o CSV, sem trazer a bagunça</Text>
-        <Text style={styles.bankImportHeroText}>Compatível com Inter e Nubank. Entradas, gastos, categorias e possíveis transferências são identificados para sua revisão.</Text>
-        <Pressable style={[styles.bankFileButton, reading && styles.buttonDisabled]} onPress={selectFile} disabled={reading}>{reading ? <ActivityIndicator color="#FFFFFF" /> : <Feather name="upload" size={18} color="#FFFFFF" />}<Text style={styles.bankFileButtonText}>{reading ? "Lendo o extrato..." : "Escolher arquivo CSV"}</Text></Pressable>
+        <Text style={styles.bankImportHeroTitle}>Traga o arquivo, sem trazer a bagunça</Text>
+        <Text style={styles.bankImportHeroText}>Extratos CSV do Inter e Nubank, faturas CSV do Nubank e faturas PDF do Inter. Tudo passa por revisão antes de entrar.</Text>
+        <Pressable style={[styles.bankFileButton, reading && styles.buttonDisabled]} onPress={selectFile} disabled={reading}>{reading ? <ActivityIndicator color="#FFFFFF" /> : <Feather name="upload" size={18} color="#FFFFFF" />}<Text style={styles.bankFileButtonText}>{reading ? "Lendo o arquivo..." : "Escolher CSV ou PDF"}</Text></Pressable>
       </View>
       <View style={styles.bankImportSafety}><Feather name="check-circle" size={17} color={COLORS.success} /><Text style={styles.bankImportSafetyText}>Nada entra automaticamente. Transferências suspeitas e linhas repetidas ficam desmarcadas.</Text></View>
       {error ? <View style={styles.bankImportError}><Feather name="alert-circle" size={17} color={COLORS.danger} /><Text style={styles.bankImportErrorText}>{error}</Text></View> : null}
     </> : <>
       <View style={styles.bankFileSummary}><MaterialCommunityIcons name="bank-outline" size={24} color={COLORS.grape} /><View style={styles.flex}><Text style={styles.bankFileBank}>{fileInfo.bankName}</Text><Text style={styles.bankFileName} numberOfLines={1}>{fileInfo.fileName}</Text></View><Pressable style={styles.bankFileChange} onPress={selectFile}><Text style={styles.bankFileChangeText}>Trocar</Text></Pressable></View>
+      {fileInfo.validationMessage ? <View style={fileInfo.validationMessage.startsWith("Atenção") ? styles.bankReviewNotice : styles.bankImportSafety}><Feather name={fileInfo.validationMessage.startsWith("Atenção") ? "alert-triangle" : "check-circle"} size={17} color={fileInfo.validationMessage.startsWith("Atenção") ? COLORS.warning : COLORS.success} /><Text style={fileInfo.validationMessage.startsWith("Atenção") ? styles.bankReviewNoticeText : styles.bankImportSafetyText}>{fileInfo.validationMessage}</Text></View> : null}
       <Text style={styles.fieldLabel}>Em qual carteira esse extrato entra?</Text>
       <View style={styles.walletOptions}>{wallets.map((wallet) => <Pressable key={wallet.id} style={[styles.walletOption, walletId === wallet.id && styles.walletOptionActive]} onPress={() => setWalletId(wallet.id)}><View style={[styles.colorDot, { backgroundColor: wallet.color }]} /><Text style={styles.walletOptionText}>{wallet.name}</Text>{walletId === wallet.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
       {!wallets.length && <View style={styles.bankImportError}><Text style={styles.bankImportErrorText}>Crie uma carteira antes de importar.</Text></View>}
@@ -2113,7 +2118,7 @@ function ProfileModal({ visible, goal, userName, userEmail, userInitials, onClos
       <Text style={styles.profileDataEyebrow}>TRAZER SEUS DADOS</Text>
       <Pressable style={styles.profileImportButton} onPress={onImportBank}>
         <View style={styles.profileImportIcon}><MaterialCommunityIcons name="file-table-outline" size={22} color={COLORS.grape} /></View>
-        <View style={styles.flex}><Text style={styles.profileImportTitle}>Importar extrato bancário</Text><Text style={styles.profileImportText}>Inter ou Nubank em CSV, com revisão antes de lançar.</Text></View>
+          <View style={styles.flex}><Text style={styles.profileImportTitle}>Importar extrato ou fatura</Text><Text style={styles.profileImportText}>Extratos em CSV e faturas Nubank CSV ou Inter PDF, sempre com revisão.</Text></View>
         <Feather name="chevron-right" size={20} color={COLORS.grape} />
       </Pressable>
     </View>
