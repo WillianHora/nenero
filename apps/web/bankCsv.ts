@@ -181,7 +181,9 @@ const findHeader = (lines: string[]) => {
     for (const delimiter of delimiters) {
       const cells = parseCsvLine(lines[lineIndex]!, delimiter);
       const headers = cells.map(normalize);
-      const hasDate = headers.some((header) => header === "data" || header.includes("data lancamento"));
+      const hasDate = headers.some((header) => (
+        header === "data" || header === "date" || header.includes("data lancamento")
+      ));
       const hasValue = headers.some((header) => (
         header === "valor" ||
         header === "amount" ||
@@ -215,7 +217,7 @@ export function parseBankCsv(content: string, fileName: string): ParsedBankState
     throw new Error("Não encontrei colunas de data, descrição e valor neste CSV.");
   }
 
-  const dateIndex = findColumn(header.headers, ["data lancamento", "data"]);
+  const dateIndex = findColumn(header.headers, ["data lancamento", "data", "date"]);
   const valueIndex = findColumn(header.headers, ["valor", "amount"]);
   const debitIndex = findColumn(header.headers, ["debito"]);
   const creditIndex = findColumn(header.headers, ["credito"]);
