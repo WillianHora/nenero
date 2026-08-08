@@ -1288,10 +1288,12 @@ function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, m
     <Pressable style={styles.whiteButton} onPress={onAdd}><Feather name="plus" size={18} color="#532CB8" /><Text style={styles.whiteButtonText}>Novo lançamento</Text></Pressable>
   </LinearGradient>;
 
-  const cycleHeroCard = <View style={styles.salaryCycleCard}>
+  const cycleHeroCard = <LinearGradient colors={IS_DARK ? ["#392758", "#171126"] : ["#463075", "#24173F"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.salaryCycleCard}>
+    <View style={styles.salaryCycleGlow} />
+    <View style={styles.salaryCycleGlowSmall} />
     <View style={styles.salaryCycleHeader}>
-      <View><Text style={styles.salaryCycleEyebrow}>PRÓXIMO CICLO DO SALÁRIO</Text><Text style={styles.salaryCycleDate}>{salaryCycle.start.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })} → {salaryCycle.end.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })}</Text></View>
-      <Pressable style={styles.salaryCycleSettings} onPress={onConfigureCycle} accessibilityLabel="Configurar ciclo do salário"><Feather name="settings" size={16} color={COLORS.grape} /></Pressable>
+      <View style={styles.salaryCycleIdentity}><View style={styles.salaryCycleIcon}><MaterialCommunityIcons name="credit-card-outline" size={19} color={COLORS.lime} /></View><View style={styles.salaryCycleHeaderCopy}><Text style={styles.salaryCycleEyebrow}>FATURAS DO PRÓXIMO SALÁRIO</Text><Text style={styles.salaryCycleDate}>{salaryCycle.start.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })} → {salaryCycle.end.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })}</Text></View></View>
+      <Pressable style={styles.salaryCycleSettings} onPress={onConfigureCycle} accessibilityLabel="Configurar ciclo do salário"><Feather name="settings" size={16} color={COLORS.lime} /></Pressable>
     </View>
     <Text style={styles.salaryCycleLabel}>Livre para gastar</Text>
     <Text style={[styles.salaryCycleValue, freeToSpend < 0 && styles.salaryCycleValueDanger]}>{money(freeToSpend)}</Text>
@@ -1302,8 +1304,8 @@ function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, m
         <View style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>{cycleInvoices.length === 1 ? "Próxima fatura" : `${cycleInvoices.length} próximas faturas`}</Text><Text style={styles.salaryCycleExpense}>− {money(cycleInvoiceTotal)}</Text></View>
         <View style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>Contas em dinheiro</Text><Text style={styles.salaryCycleExpense}>− {money(cycleCashBills)}</Text></View>
       </View>
-    </> : <Pressable style={styles.salaryCycleEmpty} onPress={onConfigureCycle}><Text style={styles.salaryCycleEmptyText}>Informe salário e dia de recebimento para ativar a projeção.</Text><Feather name="arrow-right" size={15} color={COLORS.grape} /></Pressable>}
-  </View>;
+    </> : <Pressable style={styles.salaryCycleEmpty} onPress={onConfigureCycle}><Text style={styles.salaryCycleEmptyText}>Informe salário e dia de recebimento para ativar a projeção.</Text><Feather name="arrow-right" size={15} color={COLORS.lime} /></Pressable>}
+  </LinearGradient>;
   return (
     <>
       <View style={styles.helloRow}>
@@ -2688,23 +2690,28 @@ const createStyleDefinition = () => ({
   balanceAnalysisSummary: { color: "rgba(255,255,255,0.78)", fontSize: 11, lineHeight: 16, marginTop: 4 },
   whiteButton: { alignSelf: "flex-start", backgroundColor: "white", flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 14 },
   whiteButtonText: { color: "#532CB8", fontWeight: "800", fontSize: 13 },
-  salaryCycleCard: { minHeight: 252, backgroundColor: COLORS.surface, borderRadius: 28, borderWidth: 1, borderColor: COLORS.accentBorder, padding: 18, shadowColor: COLORS.grapeDark, shadowOpacity: 0.12, shadowRadius: 18, shadowOffset: { width: 0, height: 9 }, elevation: 4 },
+  salaryCycleCard: { minHeight: 252, borderRadius: 28, borderWidth: 1, borderColor: "rgba(201,244,90,0.22)", padding: 18, overflow: "hidden", shadowColor: "#1B102F", shadowOpacity: 0.28, shadowRadius: 22, shadowOffset: { width: 0, height: 11 }, elevation: 7 },
+  salaryCycleGlow: { position: "absolute", width: 190, height: 190, borderRadius: 95, backgroundColor: "rgba(201,244,90,0.12)", top: -105, right: -42 },
+  salaryCycleGlowSmall: { position: "absolute", width: 92, height: 92, borderRadius: 46, backgroundColor: "rgba(155,123,255,0.18)", bottom: -50, left: -28 },
   salaryCycleHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
-  salaryCycleEyebrow: { color: COLORS.grape, fontSize: 8, fontWeight: "900", letterSpacing: 1 },
-  salaryCycleDate: { color: COLORS.muted, fontSize: 10, fontWeight: "700", textTransform: "lowercase", marginTop: 4 },
-  salaryCycleSettings: { width: 36, height: 36, borderRadius: 13, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center" },
-  salaryCycleLabel: { color: COLORS.muted, fontSize: 11, fontWeight: "700", marginTop: 18 },
-  salaryCycleValue: { color: COLORS.ink, fontSize: 32, fontWeight: "900", letterSpacing: -1.1, marginTop: 2 },
-  salaryCycleValueDanger: { color: COLORS.danger },
-  salaryCycleTrack: { height: 7, borderRadius: 4, overflow: "hidden", backgroundColor: COLORS.surfaceMuted, marginTop: 12 },
+  salaryCycleIdentity: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10 },
+  salaryCycleHeaderCopy: { flex: 1 },
+  salaryCycleIcon: { width: 36, height: 36, borderRadius: 13, backgroundColor: "rgba(255,255,255,0.1)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", alignItems: "center", justifyContent: "center", transform: [{ rotate: "-4deg" }] },
+  salaryCycleEyebrow: { color: COLORS.lime, fontSize: 8, fontWeight: "900", letterSpacing: 0.9 },
+  salaryCycleDate: { color: "#D8CEEC", fontSize: 9, fontWeight: "700", textTransform: "lowercase", marginTop: 4 },
+  salaryCycleSettings: { width: 36, height: 36, borderRadius: 13, backgroundColor: "rgba(255,255,255,0.1)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", alignItems: "center", justifyContent: "center" },
+  salaryCycleLabel: { color: "rgba(255,255,255,0.72)", fontSize: 11, fontWeight: "700", marginTop: 18 },
+  salaryCycleValue: { color: "#FFFFFF", fontSize: 32, fontWeight: "900", letterSpacing: -1.1, marginTop: 2 },
+  salaryCycleValueDanger: { color: "#FF9B8F" },
+  salaryCycleTrack: { height: 7, borderRadius: 4, overflow: "hidden", backgroundColor: "rgba(255,255,255,0.12)", marginTop: 12 },
   salaryCycleTrackFill: { height: "100%", borderRadius: 4, backgroundColor: COLORS.lime },
-  salaryCycleBreakdown: { gap: 9, paddingTop: 15, marginTop: 15, borderTopWidth: 1, borderTopColor: COLORS.line },
+  salaryCycleBreakdown: { gap: 9, paddingTop: 15, marginTop: 15, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.12)" },
   salaryCycleLine: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
-  salaryCycleLineLabel: { flex: 1, color: COLORS.muted, fontSize: 10, fontWeight: "700" },
-  salaryCycleIncome: { color: COLORS.success, fontSize: 10, fontWeight: "900" },
-  salaryCycleExpense: { color: COLORS.danger, fontSize: 10, fontWeight: "900" },
-  salaryCycleEmpty: { minHeight: 44, borderRadius: 14, paddingHorizontal: 12, backgroundColor: COLORS.accentSurface, flexDirection: "row", alignItems: "center", gap: 8, marginTop: 14 },
-  salaryCycleEmptyText: { flex: 1, color: COLORS.grapeDark, fontSize: 9, lineHeight: 13, fontWeight: "800" },
+  salaryCycleLineLabel: { flex: 1, color: "#D8CEEC", fontSize: 10, fontWeight: "700" },
+  salaryCycleIncome: { color: COLORS.lime, fontSize: 10, fontWeight: "900" },
+  salaryCycleExpense: { color: "#FFAA9F", fontSize: 10, fontWeight: "900" },
+  salaryCycleEmpty: { minHeight: 44, borderRadius: 14, paddingHorizontal: 12, backgroundColor: "rgba(255,255,255,0.1)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", flexDirection: "row", alignItems: "center", gap: 8, marginTop: 14 },
+  salaryCycleEmptyText: { flex: 1, color: "#F2ECFF", fontSize: 9, lineHeight: 13, fontWeight: "800" },
   metricsRow: { flexDirection: "row", gap: 12, marginTop: 14 },
   metricCard: { flex: 1, padding: 16, borderRadius: 20 },
   metricIncomeCard: { backgroundColor: COLORS.successSurface, borderWidth: 1, borderColor: COLORS.successBorder },
