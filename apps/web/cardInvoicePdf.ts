@@ -1,5 +1,4 @@
-import "pdfjs-dist/legacy/build/pdf.worker.mjs";
-import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/legacy/build/pdf.js";
 import {
   type ParsedBankStatement,
   type ParsedBankTransaction,
@@ -7,6 +6,8 @@ import {
   stableHash,
   suggestedCategory,
 } from "./bankCsv";
+
+GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
 
 const MONTHS: Record<string, number> = {
   jan: 0, fev: 1, mar: 2, abr: 3, mai: 4, jun: 5,

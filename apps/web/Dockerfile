@@ -1,5 +1,6 @@
 FROM node:22-alpine AS build
 WORKDIR /app
+ENV NODE_OPTIONS="--max-old-space-size=2048"
 
 ARG EXPO_PUBLIC_SUPABASE_URL
 ARG EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY
@@ -13,6 +14,7 @@ RUN npm ci
 
 COPY . .
 RUN npm run export:web
+RUN cp apps/web/node_modules/pdfjs-dist/legacy/build/pdf.worker.min.js apps/web/dist/pdf.worker.min.js
 
 FROM node:22-alpine AS runtime
 ENV NODE_ENV=production
