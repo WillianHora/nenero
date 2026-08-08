@@ -843,7 +843,7 @@ Antes de responder, confira silenciosamente:
           {tab === "inicio" && (
             <Home
               userName={userName}
-              balance={totalBalance}
+              balance={availableBalance}
               savedAmount={dreamsBalance}
               recurringTotal={recurringTotal}
               monthlyIncome={monthlyIncome}
@@ -1101,7 +1101,7 @@ function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, m
       <LinearGradient colors={balanceGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.balanceCard}>
         <View style={styles.balanceGlow} />
         <View style={styles.balanceHeader}>
-          <Text style={styles.balanceLabel}>Seu dinheiro todo</Text>
+          <Text style={styles.balanceLabel}>Saldo nas carteiras</Text>
         </View>
         <Text style={styles.balanceValue}>{money(balance)}</Text>
         <View style={styles.savedTotalLine}><MaterialCommunityIcons name="piggy-bank-outline" size={16} color={COLORS.lime} /><Text style={styles.savedTotalLabel}>Poupado:</Text><Text style={styles.savedTotalValue}>{money(savedAmount)}</Text></View>
