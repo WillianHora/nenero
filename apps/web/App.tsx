@@ -33,12 +33,34 @@ type Entry = {
   category: string;
   walletId: string;
   createdAt: string;
+  cardId?: string;
+  invoiceDueDate?: string;
+  invoicePaymentKey?: string;
   importId?: string;
   importSource?: string;
 };
 type BankImportDraft = ParsedBankTransaction & { selected: boolean; duplicate: boolean };
 type Wallet = { id: string; name: string; initial: number; color: string };
 type WalletBalance = { wallet: Wallet; balance: number };
+type CreditCard = {
+  id: string;
+  name: string;
+  limit: number;
+  closingDay: number;
+  dueDay: number;
+  color: string;
+  paymentWalletId: string;
+  paidInvoiceKeys: string[];
+};
+type FinancialSettings = { salaryDay: number; projectedMonthlyIncome: number };
+type CardInvoice = {
+  key: string;
+  cardId: string;
+  dueDate: string;
+  total: number;
+  entries: Entry[];
+  paid: boolean;
+};
 type SavingsPot = {
   id: string;
   type: "savings" | "debt";
@@ -81,6 +103,8 @@ type FinancialDataPayload = {
   entries: Entry[];
   recurring: Recurring[];
   savingsPots: SavingsPot[];
+  creditCards?: CreditCard[];
+  financialSettings?: FinancialSettings;
   goal: string;
   analysis: AiAnalysis | null;
 };
@@ -177,6 +201,11 @@ const formatMoneyInput = (value: string) => {
     ? parsed.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : "";
 };
+const formatMoneyDigitsInput = (value: string) => {
+  const digits = value.replace(/\D/g, "").slice(0, 15);
+  if (!digits || Number(digits) === 0) return "";
+  return (Number(digits) / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
 const parsePercentInput = (value: string) => Number(value.replace(/[^\d,.-]/g, "").replace(",", "."));
 const getRealMonthlyRate = (pot: Pick<SavingsPot, "compoundInterest" | "monthlyInterestRate" | "annualInflationRate">) => {
   if (!pot.compoundInterest) return 0;
@@ -198,9 +227,40 @@ const getSavingsContributionBalance = (pot: SavingsPot, contribution: SavingsPot
 );
 const getDreamsBalance = (pots: SavingsPot[]) => pots.filter((pot) => pot.type !== "debt").reduce((total, pot) => total + getSavingsPotBalance(pot), 0);
 const getWalletAvailableBalance = (wallet: Wallet, entries: Entry[], pots: SavingsPot[]) => {
-  const movementBalance = entries.filter((entry) => entry.walletId === wallet.id).reduce((sum, entry) => sum + (entry.kind === "income" ? entry.value : -entry.value), wallet.initial);
+  const movementBalance = entries.filter((entry) => entry.walletId === wallet.id && !entry.cardId).reduce((sum, entry) => sum + (entry.kind === "income" ? entry.value : -entry.value), wallet.initial);
   const reserved = pots.filter((pot) => pot.type !== "debt").reduce((total, pot) => total + pot.contributions.filter((contribution) => contribution.walletId === wallet.id).reduce((sum, contribution) => sum + contribution.value, 0), 0);
   return movementBalance - reserved;
+};
+const clampDay = (year: number, month: number, day: number) => Math.min(day, new Date(year, month + 1, 0).getDate());
+const dateAtNoon = (year: number, month: number, day: number) => new Date(year, month, clampDay(year, month, day), 12);
+const monthKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+const invoiceKey = (cardId: string, dueDate: string | Date) => `${cardId}:${monthKey(typeof dueDate === "string" ? new Date(dueDate) : dueDate)}`;
+const getInvoiceDueDate = (card: CreditCard, purchaseDate: string | Date) => {
+  const purchase = typeof purchaseDate === "string" ? new Date(purchaseDate) : purchaseDate;
+  const closingMonthOffset = purchase.getDate() > card.closingDay ? 1 : 0;
+  const closingMonth = new Date(purchase.getFullYear(), purchase.getMonth() + closingMonthOffset, 1);
+  const dueMonthOffset = card.dueDay <= card.closingDay ? 1 : 0;
+  return dateAtNoon(closingMonth.getFullYear(), closingMonth.getMonth() + dueMonthOffset, card.dueDay);
+};
+const getNextSalaryCycle = (settings: FinancialSettings, today = new Date()) => {
+  const thisMonthSalary = dateAtNoon(today.getFullYear(), today.getMonth(), settings.salaryDay);
+  const start = today < thisMonthSalary ? thisMonthSalary : dateAtNoon(today.getFullYear(), today.getMonth() + 1, settings.salaryDay);
+  const next = dateAtNoon(start.getFullYear(), start.getMonth() + 1, settings.salaryDay);
+  const end = new Date(next.getFullYear(), next.getMonth(), next.getDate() - 1, 23, 59, 59, 999);
+  return { start, end };
+};
+const getCardInvoices = (cards: CreditCard[], entries: Entry[]): CardInvoice[] => {
+  const groups = new Map<string, CardInvoice>();
+  entries.filter((entry) => entry.kind === "expense" && entry.cardId && entry.invoiceDueDate).forEach((entry) => {
+    const card = cards.find((item) => item.id === entry.cardId);
+    if (!card) return;
+    const key = invoiceKey(card.id, entry.invoiceDueDate!);
+    const current = groups.get(key) ?? { key, cardId: card.id, dueDate: entry.invoiceDueDate!, total: 0, entries: [], paid: card.paidInvoiceKeys.includes(key) };
+    current.total += entry.value;
+    current.entries.push(entry);
+    groups.set(key, current);
+  });
+  return [...groups.values()].sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
 };
 const getMonthlyTarget = (goal: number, months: number, rate: number, currentBalance = 0) => {
   const missing = Math.max(0, goal - currentBalance * Math.pow(1 + rate, months));
@@ -227,6 +287,8 @@ function AppContent() {
   const [entries, setEntries] = useState(initialEntries);
   const [recurring, setRecurring] = useState(initialRecurring);
   const [savingsPots, setSavingsPots] = useState<SavingsPot[]>([]);
+  const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
+  const [financialSettings, setFinancialSettings] = useState<FinancialSettings>({ salaryDay: 5, projectedMonthlyIncome: 0 });
   const [goal, setGoal] = useState("");
   const [analysis, setAnalysis] = useState<AiAnalysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -234,10 +296,11 @@ function AppContent() {
   const [ready, setReady] = useState(false);
   const [cloudUserId, setCloudUserId] = useState<string | null>(null);
   const [cloudError, setCloudError] = useState("");
-  const [modal, setModal] = useState<"entry" | "wallet" | "recurring" | "pot" | "potDeposit" | "potDelete" | "lifeCalculator" | "profile" | "bankImport" | "analysis" | null>(null);
+  const [modal, setModal] = useState<"entry" | "wallet" | "card" | "financialSettings" | "recurring" | "pot" | "potDeposit" | "potDelete" | "lifeCalculator" | "profile" | "bankImport" | "analysis" | null>(null);
   const [editingRecurring, setEditingRecurring] = useState<Recurring | null>(null);
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null);
   const [editingWallet, setEditingWallet] = useState<Wallet | null>(null);
+  const [editingCard, setEditingCard] = useState<CreditCard | null>(null);
   const [selectedPot, setSelectedPot] = useState<SavingsPot | null>(null);
 
   useEffect(() => {
@@ -297,11 +360,16 @@ function AppContent() {
           setEntries(data.entries ?? initialEntries);
           setRecurring(data.recurring ?? initialRecurring);
           setSavingsPots((data.savingsPots ?? []).map((pot: SavingsPot) => ({ ...pot, type: pot.type ?? "savings", compoundInterest: pot.compoundInterest ?? false, monthlyInterestRate: pot.monthlyInterestRate ?? 0, annualInflationRate: pot.annualInflationRate ?? 0, contributions: (pot.contributions ?? []).map((contribution) => contribution.walletId || !fallbackWalletId ? contribution : { ...contribution, walletId: fallbackWalletId }) })));
+          setCreditCards((data.creditCards ?? []).map((card: CreditCard) => ({ ...card, paidInvoiceKeys: card.paidInvoiceKeys ?? [] })));
+          const plannedSalary = (data.recurring ?? []).find((item: Recurring) => item.kind === "income" && item.active);
+          setFinancialSettings(data.financialSettings ?? { salaryDay: plannedSalary?.day ?? 5, projectedMonthlyIncome: plannedSalary?.value ?? 0 });
         } else {
           setWallets([]);
           setEntries([]);
           setRecurring([]);
           setSavingsPots([]);
+          setCreditCards([]);
+          setFinancialSettings({ salaryDay: 5, projectedMonthlyIncome: 0 });
         }
         setGoal(savedGoal ?? "");
         setAnalysis(savedAnalysis ? JSON.parse(savedAnalysis) : null);
@@ -312,8 +380,8 @@ function AppContent() {
   }, [authReady, session?.user.id]);
 
   useEffect(() => {
-    if (ready && session) AsyncStorage.setItem(`@nenero/data:${session.user.id}`, JSON.stringify({ wallets, entries, recurring, savingsPots }));
-  }, [wallets, entries, recurring, savingsPots, ready, session?.user.id]);
+    if (ready && session) AsyncStorage.setItem(`@nenero/data:${session.user.id}`, JSON.stringify({ wallets, entries, recurring, savingsPots, creditCards, financialSettings }));
+  }, [wallets, entries, recurring, savingsPots, creditCards, financialSettings, ready, session?.user.id]);
 
   useEffect(() => {
     if (!ready || !session) return;
@@ -350,14 +418,17 @@ function AppContent() {
         setEntries(payload.entries ?? []);
         setRecurring(payload.recurring ?? []);
         setSavingsPots((payload.savingsPots ?? []).map((pot) => ({ ...pot, type: pot.type ?? "savings", compoundInterest: pot.compoundInterest ?? false, monthlyInterestRate: pot.monthlyInterestRate ?? 0, annualInflationRate: pot.annualInflationRate ?? 0, contributions: (pot.contributions ?? []).map((contribution) => contribution.walletId || !fallbackWalletId ? contribution : { ...contribution, walletId: fallbackWalletId }) })));
+        setCreditCards((payload.creditCards ?? []).map((card) => ({ ...card, paidInvoiceKeys: card.paidInvoiceKeys ?? [] })));
+        const plannedSalary = (payload.recurring ?? []).find((item) => item.kind === "income" && item.active);
+        setFinancialSettings(payload.financialSettings ?? { salaryDay: plannedSalary?.day ?? 5, projectedMonthlyIncome: plannedSalary?.value ?? 0 });
         setGoal(payload.goal ?? "");
         setAnalysis(payload.analysis ?? null);
       } else {
-        const payload: FinancialDataPayload = { wallets, entries, recurring, savingsPots, goal, analysis };
+        const payload: FinancialDataPayload = { wallets, entries, recurring, savingsPots, creditCards, financialSettings, goal, analysis };
         const { error: insertError } = await supabase.from("user_financial_data").upsert({
           user_id: session.user.id,
           payload,
-          schema_version: 1,
+          schema_version: 2,
           updated_at: new Date().toISOString(),
         });
         if (insertError) {
@@ -373,18 +444,18 @@ function AppContent() {
   useEffect(() => {
     if (!ready || !session || !supabase || cloudUserId !== session.user.id) return;
     const client = supabase;
-    const payload: FinancialDataPayload = { wallets, entries, recurring, savingsPots, goal, analysis };
+    const payload: FinancialDataPayload = { wallets, entries, recurring, savingsPots, creditCards, financialSettings, goal, analysis };
     const timer = setTimeout(async () => {
       const { error } = await client.from("user_financial_data").upsert({
         user_id: session.user.id,
         payload,
-        schema_version: 1,
+        schema_version: 2,
         updated_at: new Date().toISOString(),
       });
       setCloudError(error ? `Falha ao sincronizar: ${error.message}` : "");
     }, 700);
     return () => clearTimeout(timer);
-  }, [wallets, entries, recurring, savingsPots, goal, analysis, ready, session?.user.id, cloudUserId]);
+  }, [wallets, entries, recurring, savingsPots, creditCards, financialSettings, goal, analysis, ready, session?.user.id, cloudUserId]);
 
   useEffect(() => {
     if (!ready) return;
@@ -446,8 +517,28 @@ function AppContent() {
     return value.getMonth() === now.getMonth() && value.getFullYear() === now.getFullYear();
   };
   const monthlyIncome = entries.filter(entry => entry.kind === "income" && isCurrentMonth(entry.createdAt)).reduce((sum, entry) => sum + entry.value, 0);
-  const monthlyExpenses = entries.filter(entry => entry.kind === "expense" && isCurrentMonth(entry.createdAt)).reduce((sum, entry) => sum + entry.value, 0);
+  const monthlyExpenses = entries.filter(entry => entry.kind === "expense" && !entry.invoicePaymentKey && isCurrentMonth(entry.createdAt)).reduce((sum, entry) => sum + entry.value, 0);
   const sortedEntries = useMemo(() => [...entries].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [entries]);
+  const cardInvoices = useMemo(() => getCardInvoices(creditCards, entries), [creditCards, entries]);
+  const salaryCycle = useMemo(() => getNextSalaryCycle(financialSettings), [financialSettings]);
+  const cycleInvoices = cardInvoices.filter((invoice) => {
+    const dueDate = new Date(invoice.dueDate);
+    return !invoice.paid && dueDate >= salaryCycle.start && dueDate <= salaryCycle.end;
+  });
+  const cycleInvoiceTotal = cycleInvoices.reduce((sum, invoice) => sum + invoice.total, 0);
+  const cycleCashBills = recurring.filter((item) => item.active && item.kind !== "income").reduce((sum, item) => {
+    const cursor = new Date(salaryCycle.start.getFullYear(), salaryCycle.start.getMonth(), 1);
+    const finalMonth = new Date(salaryCycle.end.getFullYear(), salaryCycle.end.getMonth(), 1);
+    let occurrences = 0;
+    while (cursor <= finalMonth) {
+      const dueDate = dateAtNoon(cursor.getFullYear(), cursor.getMonth(), item.day);
+      const key = monthKey(dueDate);
+      if (dueDate >= salaryCycle.start && dueDate <= salaryCycle.end && !(item.paidMonths ?? []).includes(key)) occurrences += 1;
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+    return sum + item.value * occurrences;
+  }, 0);
+  const freeToSpend = financialSettings.projectedMonthlyIncome - cycleInvoiceTotal - cycleCashBills;
 
   const runAnalysis = async (openDetails = false) => {
     if (!goal.trim()) { setModal("profile"); return; }
@@ -455,7 +546,7 @@ function AppContent() {
     setAnalyzing(true);
     setAnalysisError("");
     const monthEntries = entries.filter(entry => isCurrentMonth(entry.createdAt));
-    const byCategory = monthEntries.filter(entry => entry.kind === "expense").reduce<Record<string, number>>((result, entry) => {
+    const byCategory = monthEntries.filter(entry => entry.kind === "expense" && !entry.invoicePaymentKey).reduce<Record<string, number>>((result, entry) => {
       result[entry.category] = (result[entry.category] ?? 0) + entry.value;
       return result;
     }, {});
@@ -468,7 +559,7 @@ function AppContent() {
         incomePercent: monthlyIncome > 0 ? Math.round((value / monthlyIncome) * 100) : null,
       }));
     const topExpenses = monthEntries
-      .filter(entry => entry.kind === "expense")
+      .filter(entry => entry.kind === "expense" && !entry.invoicePaymentKey)
       .sort((a, b) => b.value - a.value)
       .slice(0, 5)
       .map(entry => ({ title: entry.title, category: entry.category, value: entry.value }));
@@ -746,6 +837,8 @@ Antes de responder, confira silenciosamente:
     setEntries([]);
     setRecurring([]);
     setSavingsPots([]);
+    setCreditCards([]);
+    setFinancialSettings({ salaryDay: 5, projectedMonthlyIncome: 0 });
     setGoal("");
     setAnalysis(null);
     setCloudError("");
@@ -821,6 +914,8 @@ Antes de responder, confira silenciosamente:
       postedMonths: salaryIsDue ? [currentMonth] : [],
     }]);
     setSavingsPots([]);
+    setCreditCards([]);
+    setFinancialSettings({ salaryDay: incomeDay, projectedMonthlyIncome: monthlyIncome });
     setGoal(financialGoal);
     setAnalysis(null);
   }} />;
@@ -848,6 +943,12 @@ Antes de responder, confira silenciosamente:
               recurringTotal={recurringTotal}
               monthlyIncome={monthlyIncome}
               monthlyExpenses={monthlyExpenses}
+              financialSettings={financialSettings}
+              salaryCycle={salaryCycle}
+              cycleInvoices={cycleInvoices}
+              cycleCashBills={cycleCashBills}
+              freeToSpend={freeToSpend}
+              creditCards={creditCards}
               entries={sortedEntries}
               wallets={wallets}
               analysis={analysis}
@@ -856,9 +957,10 @@ Antes de responder, confira silenciosamente:
               onAnalyze={() => analysis || analysisError ? setModal("analysis") : runAnalysis(false)}
               onAdd={() => { setEditingEntry(null); setModal("entry"); }}
               onEditEntry={(entry) => { setEditingEntry(entry); setModal("entry"); }}
+              onConfigureCycle={() => setModal("financialSettings")}
             />
           )}
-          {tab === "movimentos" && <Movements entries={sortedEntries} wallets={wallets} onAdd={() => { setEditingEntry(null); setModal("entry"); }} onEdit={(entry) => { setEditingEntry(entry); setModal("entry"); }} />}
+          {tab === "movimentos" && <Movements entries={sortedEntries} wallets={wallets} cards={creditCards} onAdd={() => { setEditingEntry(null); setModal("entry"); }} onEdit={(entry) => { setEditingEntry(entry); setModal("entry"); }} />}
           {tab === "recorrentes" && (
             <RecurringList
               items={recurring}
@@ -896,7 +998,16 @@ Antes de responder, confira silenciosamente:
               onDelete={(pot) => { setSelectedPot(pot); setModal("potDelete"); }}
             />
           )}
-          {tab === "carteiras" && <WalletList walletBalances={walletBalances} pots={savingsPots} dreamsBalance={dreamsBalance} onAdd={() => { setEditingWallet(null); setModal("wallet"); }} onEdit={(wallet) => { setEditingWallet(wallet); setModal("wallet"); }} onOpenDreams={() => setTab("cofrinhos")} />}
+          {tab === "carteiras" && <WalletList walletBalances={walletBalances} pots={savingsPots} dreamsBalance={dreamsBalance} cards={creditCards} invoices={cardInvoices} onAdd={() => { setEditingWallet(null); setModal("wallet"); }} onEdit={(wallet) => { setEditingWallet(wallet); setModal("wallet"); }} onAddCard={() => { setEditingCard(null); setModal("card"); }} onEditCard={(card) => { setEditingCard(card); setModal("card"); }} onPayInvoice={(invoice) => {
+            const card = creditCards.find((item) => item.id === invoice.cardId);
+            const walletId = card?.paymentWalletId || wallets[0]?.id;
+            if (!card || !walletId || invoice.paid) return;
+            setEntries((items) => [{ id: uid(), title: `Pagamento da fatura ${card.name}`, value: invoice.total, kind: "expense", category: "Outros", walletId, createdAt: new Date().toISOString(), invoicePaymentKey: invoice.key }, ...items]);
+            setCreditCards((items) => items.map((item) => item.id === card.id ? { ...item, paidInvoiceKeys: [...new Set([...item.paidInvoiceKeys, invoice.key])] } : item));
+          }} onReopenInvoice={(invoice) => {
+            setEntries((items) => items.filter((entry) => entry.invoicePaymentKey !== invoice.key));
+            setCreditCards((items) => items.map((item) => item.id === invoice.cardId ? { ...item, paidInvoiceKeys: item.paidInvoiceKeys.filter((key) => key !== invoice.key) } : item));
+          }} onOpenDreams={() => setTab("cofrinhos")} />}
           {tab === "ferramentas" && <Tools onLifeCalculator={() => setModal("lifeCalculator")} />}
         </ScrollView>
 
@@ -906,6 +1017,7 @@ Antes de responder, confira silenciosamente:
       <EntryModal
         visible={modal === "entry"}
         wallets={wallets}
+        cards={creditCards}
         item={editingEntry}
         onClose={() => { setModal(null); setEditingEntry(null); }}
         onSave={(entry) => {
@@ -939,6 +1051,11 @@ Antes de responder, confira silenciosamente:
         onDelete={editingWallet ? () => {
           const linkedEntries = entries.filter((entry) => entry.walletId === editingWallet.id).length;
           const linkedRecurring = recurring.filter((item) => item.walletId === editingWallet.id).length;
+          const linkedCards = creditCards.filter((card) => card.paymentWalletId === editingWallet.id).length;
+          if (linkedCards) {
+            globalThis.alert(`Esta carteira paga ${linkedCards} ${linkedCards === 1 ? "cartão" : "cartões"}. Escolha outra conta para a fatura antes de excluí-la.`);
+            return;
+          }
           const linkedCopy = [linkedEntries ? `${linkedEntries} lançamento${linkedEntries === 1 ? "" : "s"}` : "", linkedRecurring ? `${linkedRecurring} planejamento${linkedRecurring === 1 ? "" : "s"}` : ""].filter(Boolean).join(" e ");
           const confirmed = globalThis.confirm(`Excluir “${editingWallet.name}”?\n\n${linkedCopy ? `A carteira e ${linkedCopy} vinculados serão apagados.` : "A carteira será apagada."} Essa ação não pode ser desfeita.`);
           if (!confirmed) return;
@@ -949,6 +1066,29 @@ Antes de responder, confira silenciosamente:
           setEditingWallet(null);
         } : undefined}
       />
+      <CreditCardModal
+        visible={modal === "card"}
+        wallets={wallets}
+        item={editingCard}
+        onClose={() => { setModal(null); setEditingCard(null); }}
+        onSave={(card) => {
+          if (editingCard) setCreditCards((items) => items.map((item) => item.id === editingCard.id ? { ...item, ...card } : item));
+          else setCreditCards((items) => [...items, { ...card, id: uid(), paidInvoiceKeys: [] }]);
+          setModal(null);
+          setEditingCard(null);
+        }}
+        onDelete={editingCard ? () => {
+          const linked = entries.filter((entry) => entry.cardId === editingCard.id).length;
+          if (linked) {
+            globalThis.alert(`Este cartão tem ${linked} compra${linked === 1 ? "" : "s"} vinculada${linked === 1 ? "" : "s"}. Exclua ou mova essas compras antes.`);
+            return;
+          }
+          setCreditCards((items) => items.filter((item) => item.id !== editingCard.id));
+          setModal(null);
+          setEditingCard(null);
+        } : undefined}
+      />
+      <FinancialSettingsModal visible={modal === "financialSettings"} settings={financialSettings} onClose={() => setModal(null)} onSave={(settings) => { setFinancialSettings(settings); setModal(null); }} />
       <RecurringModal
         visible={modal === "recurring"}
         wallets={wallets}
@@ -1063,6 +1203,7 @@ Antes de responder, confira silenciosamente:
       <BankImportModal
         visible={modal === "bankImport"}
         wallets={wallets}
+        cards={creditCards}
         existingEntries={entries}
         onClose={() => setModal(null)}
         onImport={(importedEntries) => {
@@ -1076,11 +1217,12 @@ Antes de responder, confira silenciosamente:
   );
 }
 
-function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, monthlyExpenses, entries, wallets, analysis, analyzing, hasGoal, onAnalyze, onAdd, onEditEntry }: {
+function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, monthlyExpenses, financialSettings, salaryCycle, cycleInvoices, cycleCashBills, freeToSpend, creditCards, entries, wallets, analysis, analyzing, hasGoal, onAnalyze, onAdd, onEditEntry, onConfigureCycle }: {
   userName: string;
   balance: number; savedAmount: number; recurringTotal: number; monthlyIncome: number; monthlyExpenses: number; entries: Entry[]; wallets: Wallet[];
+  financialSettings: FinancialSettings; salaryCycle: { start: Date; end: Date }; cycleInvoices: CardInvoice[]; cycleCashBills: number; freeToSpend: number; creditCards: CreditCard[];
   analysis: AiAnalysis | null; analyzing: boolean; hasGoal: boolean; onAnalyze: () => void;
-  onAdd: () => void; onEditEntry: (entry: Entry) => void;
+  onAdd: () => void; onEditEntry: (entry: Entry) => void; onConfigureCycle: () => void;
 }) {
   const today = new Date().toLocaleDateString("pt-BR", {
     weekday: "long",
@@ -1112,6 +1254,22 @@ function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, m
         </Pressable>
       </LinearGradient>
 
+      <View style={styles.salaryCycleCard}>
+        <View style={styles.salaryCycleHeader}>
+          <View><Text style={styles.salaryCycleEyebrow}>PRÓXIMO CICLO DO SALÁRIO</Text><Text style={styles.salaryCycleDate}>{salaryCycle.start.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })} → {salaryCycle.end.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })}</Text></View>
+          <Pressable style={styles.salaryCycleSettings} onPress={onConfigureCycle} accessibilityLabel="Configurar ciclo do salário"><Feather name="settings" size={16} color={COLORS.grape} /></Pressable>
+        </View>
+        <Text style={styles.salaryCycleLabel}>Livre para gastar</Text>
+        <Text style={[styles.salaryCycleValue, freeToSpend < 0 && styles.salaryCycleValueDanger]}>{money(freeToSpend)}</Text>
+        <View style={styles.salaryCycleTrack}><View style={[styles.salaryCycleTrackFill, { width: `${Math.min(100, Math.max(0, financialSettings.projectedMonthlyIncome > 0 ? (Math.max(0, freeToSpend) / financialSettings.projectedMonthlyIncome) * 100 : 0))}%` }]} /></View>
+        <View style={styles.salaryCycleBreakdown}>
+          <View style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>Salário previsto</Text><Text style={styles.salaryCycleIncome}>+ {money(financialSettings.projectedMonthlyIncome)}</Text></View>
+          {cycleInvoices.map((invoice) => <View key={invoice.key} style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>Fatura {creditCards.find((card) => card.id === invoice.cardId)?.name ?? "cartão"}</Text><Text style={styles.salaryCycleExpense}>− {money(invoice.total)}</Text></View>)}
+          <View style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>Contas em dinheiro</Text><Text style={styles.salaryCycleExpense}>− {money(cycleCashBills)}</Text></View>
+        </View>
+        {!financialSettings.projectedMonthlyIncome && <Pressable style={styles.salaryCycleEmpty} onPress={onConfigureCycle}><Text style={styles.salaryCycleEmptyText}>Informe salário e dia de recebimento para ativar a projeção.</Text><Feather name="arrow-right" size={15} color={COLORS.grape} /></Pressable>}
+      </View>
+
       <View style={styles.metricsRow}>
         <View style={[styles.metricCard, styles.metricIncomeCard]}>
           <View style={[styles.iconBubble, { backgroundColor: "#799B22" }]}><Feather name="arrow-down-left" size={17} color="white" /></View>
@@ -1120,7 +1278,7 @@ function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, m
         </View>
         <View style={[styles.metricCard, styles.metricExpenseCard]}>
           <View style={[styles.iconBubble, { backgroundColor: COLORS.coral }]}><Feather name="arrow-up-right" size={17} color="white" /></View>
-          <Text style={[styles.metricLabel, styles.metricExpenseLabel]}>Saiu este mês</Text>
+          <Text style={[styles.metricLabel, styles.metricExpenseLabel]}>Gastou este mês</Text>
           <Text style={[styles.metricValue, styles.metricExpenseValue]}>{money(monthlyExpenses)}</Text>
         </View>
       </View>
@@ -1133,7 +1291,7 @@ function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, m
 
       <SectionTitle title="Últimos rolês do dinheiro" action="Ver todos" />
       <View style={styles.listCard}>
-        {entries.slice(0, 4).map((entry, index) => <EntryRow key={entry.id} entry={entry} wallet={wallets.find(wallet => wallet.id === entry.walletId)} last={index === Math.min(entries.length, 4) - 1} onEdit={() => onEditEntry(entry)} />)}
+        {entries.slice(0, 4).map((entry, index) => <EntryRow key={entry.id} entry={entry} wallet={wallets.find(wallet => wallet.id === entry.walletId)} card={creditCards.find(card => card.id === entry.cardId)} last={index === Math.min(entries.length, 4) - 1} onEdit={entry.invoicePaymentKey ? undefined : () => onEditEntry(entry)} />)}
       </View>
 
       <View style={styles.tipCard}>
@@ -1175,7 +1333,7 @@ function Tools({ onLifeCalculator }: { onLifeCalculator: () => void }) {
   </>;
 }
 
-function Movements({ entries, wallets, onAdd, onEdit }: { entries: Entry[]; wallets: Wallet[]; onAdd: () => void; onEdit: (entry: Entry) => void }) {
+function Movements({ entries, wallets, cards, onAdd, onEdit }: { entries: Entry[]; wallets: Wallet[]; cards: CreditCard[]; onAdd: () => void; onEdit: (entry: Entry) => void }) {
   const [kindFilter, setKindFilter] = useState<"all" | EntryKind>("all");
   const [walletFilter, setWalletFilter] = useState("all");
   const [selectedMonth, setSelectedMonth] = useState(() => {
@@ -1191,7 +1349,7 @@ function Movements({ entries, wallets, onAdd, onEdit }: { entries: Entry[]; wall
   });
   const filteredEntries = monthEntries.filter(entry =>
     (kindFilter === "all" || entry.kind === kindFilter) &&
-    (walletFilter === "all" || entry.walletId === walletFilter)
+    (walletFilter === "all" || entry.walletId === walletFilter || entry.cardId === walletFilter)
   );
   const hasFilters = kindFilter !== "all" || walletFilter !== "all";
 
@@ -1238,11 +1396,17 @@ function Movements({ entries, wallets, onAdd, onEdit }: { entries: Entry[]; wall
             <Text style={[styles.filterChipText, walletFilter === wallet.id && styles.filterChipTextActive]}>{wallet.name}</Text>
           </Pressable>
         ))}
+        {cards.map(card => (
+          <Pressable key={card.id} style={[styles.filterChip, walletFilter === card.id && styles.filterChipActive]} onPress={() => setWalletFilter(card.id)}>
+            <View style={[styles.filterDot, { backgroundColor: card.color }]} />
+            <Text style={[styles.filterChipText, walletFilter === card.id && styles.filterChipTextActive]}>{card.name}</Text>
+          </Pressable>
+        ))}
       </ScrollView>
 
       {filteredEntries.length > 0 ? (
         <View style={styles.listCard}>
-          {filteredEntries.map((entry, i) => <EntryRow key={entry.id} entry={entry} wallet={wallets.find(wallet => wallet.id === entry.walletId)} last={i === filteredEntries.length - 1} onEdit={() => onEdit(entry)} />)}
+          {filteredEntries.map((entry, i) => <EntryRow key={entry.id} entry={entry} wallet={wallets.find(wallet => wallet.id === entry.walletId)} card={cards.find(card => card.id === entry.cardId)} last={i === filteredEntries.length - 1} onEdit={entry.invoicePaymentKey ? undefined : () => onEdit(entry)} />)}
         </View>
       ) : (
         <View style={styles.emptyState}>
@@ -1317,7 +1481,7 @@ function RecurringList({ items, wallets, onAdd, onEdit, onToggle, onPay }: { ite
   );
 }
 
-function WalletList({ walletBalances, pots, dreamsBalance, onAdd, onEdit, onOpenDreams }: { walletBalances: WalletBalance[]; pots: SavingsPot[]; dreamsBalance: number; onAdd: () => void; onEdit: (wallet: Wallet) => void; onOpenDreams: () => void }) {
+function WalletList({ walletBalances, pots, dreamsBalance, cards, invoices, onAdd, onEdit, onAddCard, onEditCard, onPayInvoice, onReopenInvoice, onOpenDreams }: { walletBalances: WalletBalance[]; pots: SavingsPot[]; dreamsBalance: number; cards: CreditCard[]; invoices: CardInvoice[]; onAdd: () => void; onEdit: (wallet: Wallet) => void; onAddCard: () => void; onEditCard: (card: CreditCard) => void; onPayInvoice: (invoice: CardInvoice) => void; onReopenInvoice: (invoice: CardInvoice) => void; onOpenDreams: () => void }) {
   const savingsGoals = pots.filter((pot) => pot.type !== "debt");
   return (
     <>
@@ -1330,6 +1494,27 @@ function WalletList({ walletBalances, pots, dreamsBalance, onAdd, onEdit, onOpen
         </Pressable>
       ))}
       <Pressable style={styles.dashedButton} onPress={onAdd}><Feather name="plus" size={20} color={COLORS.grape} /><Text style={styles.dashedText}>Criar outra carteira</Text></Pressable>
+      <SectionTitle title="Cartões de crédito" />
+      {cards.map((card) => {
+        const cardInvoices = invoices.filter((invoice) => invoice.cardId === card.id);
+        const openTotal = cardInvoices.filter((invoice) => !invoice.paid).reduce((sum, invoice) => sum + invoice.total, 0);
+        const availableLimit = card.limit - openTotal;
+        return <View key={card.id} style={styles.creditCardBlock}>
+          <Pressable style={[styles.creditCardFace, { backgroundColor: card.color }]} onPress={() => onEditCard(card)} accessibilityLabel={`Editar cartão ${card.name}`}>
+            <View style={styles.walletTop}><MaterialCommunityIcons name="contactless-payment-circle-outline" size={24} color="#FFFFFF" /><View style={styles.walletEditBadge}><Feather name="edit-2" size={14} color="#FFFFFF" /></View></View>
+            <Text style={styles.walletName}>{card.name}</Text>
+            <Text style={styles.creditCardAvailable}>{money(availableLimit)} disponíveis</Text>
+            <Text style={styles.creditCardMeta}>Fecha dia {card.closingDay} · vence dia {card.dueDay} · limite {money(card.limit)}</Text>
+          </Pressable>
+          {cardInvoices.length ? <View style={styles.invoiceList}>{cardInvoices.map((invoice) => <View key={invoice.key} style={styles.invoiceRow}>
+            <View style={styles.invoiceDateBadge}><Text style={styles.invoiceDateDay}>{new Date(invoice.dueDate).getDate()}</Text><Text style={styles.invoiceDateMonth}>{new Date(invoice.dueDate).toLocaleDateString("pt-BR", { month: "short" }).replace(".", "")}</Text></View>
+            <View style={styles.flex}><Text style={styles.invoiceTitle}>Fatura de {new Date(invoice.dueDate).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}</Text><Text style={styles.invoiceMeta}>{invoice.entries.length} {invoice.entries.length === 1 ? "compra" : "compras"} · {invoice.paid ? "paga" : "em aberto"}</Text></View>
+            <Text style={styles.invoiceValue}>{money(invoice.total)}</Text>
+            <Pressable style={[styles.invoicePayButton, invoice.paid && styles.invoiceReopenButton]} onPress={() => invoice.paid ? onReopenInvoice(invoice) : onPayInvoice(invoice)}><Feather name={invoice.paid ? "rotate-ccw" : "check"} size={13} color={invoice.paid ? COLORS.grape : "#FFFFFF"} /><Text style={[styles.invoicePayButtonText, invoice.paid && styles.invoiceReopenButtonText]}>{invoice.paid ? "Desfazer" : "Pagar"}</Text></Pressable>
+          </View>)}</View> : <Text style={styles.emptySectionText}>Nenhuma compra lançada neste cartão.</Text>}
+        </View>;
+      })}
+      <Pressable style={styles.dashedButton} onPress={onAddCard}><Feather name="plus" size={20} color={COLORS.grape} /><Text style={styles.dashedText}>Adicionar cartão de crédito</Text></Pressable>
       {savingsGoals.length > 0 && <Pressable style={styles.dreamWalletPressable} onPress={onOpenDreams}>
         <LinearGradient colors={["#2B214D", "#6540C8"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.dreamWalletCard}>
           <View style={styles.dreamWalletTop}><View style={styles.dreamWalletIcon}><MaterialCommunityIcons name="star-four-points" size={22} color={COLORS.mark} /></View><View style={styles.dreamWalletAutoBadge}><Text style={styles.dreamWalletAutoText}>CARTEIRA AUTOMÁTICA</Text></View></View>
@@ -1393,7 +1578,7 @@ function PageHeader({ eyebrow, title, button, onPress, hideButton = false }: { e
   return <View style={styles.pageHeader}><View><Text style={styles.eyebrow}>{eyebrow}</Text><Text style={styles.h1}>{title}</Text></View>{!hideButton && <Pressable style={styles.smallButton} onPress={onPress}><Feather name="plus" size={16} color="white" /><Text style={styles.smallButtonText}>{button}</Text></Pressable>}</View>;
 }
 
-function EntryRow({ entry, wallet, last, onEdit }: { entry: Entry; wallet?: Wallet; last: boolean; onEdit?: () => void }) {
+function EntryRow({ entry, wallet, card, last, onEdit }: { entry: Entry; wallet?: Wallet; card?: CreditCard; last: boolean; onEdit?: () => void }) {
   const visual = getCategoryVisual(entry.category, entry.kind);
   return (
     <View style={[styles.entryRow, !last && styles.entryBorder]}>
@@ -1401,7 +1586,7 @@ function EntryRow({ entry, wallet, last, onEdit }: { entry: Entry; wallet?: Wall
       <View style={styles.flex}>
         <Text style={styles.rowTitle}>{entry.title}</Text>
         <View style={styles.entryMetaLine}><View style={[styles.entryCategoryBadge, { backgroundColor: visual.background }]}><Text style={[styles.entryCategoryBadgeText, { color: visual.color }]}>{entry.category}</Text></View><Text style={styles.entryDateText}>{new Date(entry.createdAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}</Text></View>
-        {wallet && <View style={styles.entryWallet}><View style={[styles.entryWalletDot, { backgroundColor: wallet.color }]} /><Text style={styles.entryWalletText}>{wallet.name}</Text></View>}
+        {(card || wallet) && <View style={styles.entryWallet}><View style={[styles.entryWalletDot, { backgroundColor: card?.color ?? wallet?.color }]} /><Text style={styles.entryWalletText}>{card ? `${card.name} · fatura ${new Date(entry.invoiceDueDate!).toLocaleDateString("pt-BR", { month: "short" })}` : wallet?.name}</Text></View>}
       </View>
       <Text style={[styles.rowValue, entry.kind === "income" && styles.income]}>{entry.kind === "income" ? "+" : "−"} {money(entry.value)}</Text>
       {onEdit && <Pressable style={styles.editEntryButton} onPress={onEdit} accessibilityLabel={`Editar ${entry.title}`}><Feather name="edit-2" size={14} color={COLORS.grape} /></Pressable>}
@@ -1436,34 +1621,11 @@ function Field({ label, value, onChange, placeholder, keyboardType, secureTextEn
   money?: boolean;
 }) {
   const [moneySelection, setMoneySelection] = useState({ start: 0, end: 0 });
-  const [editingCents, setEditingCents] = useState(false);
 
   const changeMoney = (text: string) => {
-    if (!text) {
-      setEditingCents(false);
-      setMoneySelection({ start: 0, end: 0 });
-      onChange("");
-      return;
-    }
-
-    const commaCount = (text.match(/,/g) ?? []).length;
-    const currentComma = value.indexOf(",");
-    if (commaCount > 1 && currentComma >= 0) {
-      setEditingCents(true);
-      setMoneySelection({ start: currentComma + 1, end: currentComma + 1 });
-      return;
-    }
-
-    const formatted = formatMoneyInput(text);
-    const commaIndex = formatted.indexOf(",");
-    if (editingCents && commaIndex >= 0) {
-      const deleting = text.length < value.length;
-      const nextPosition = Math.max(commaIndex + 1, Math.min(commaIndex + 3, moneySelection.start + (deleting ? -1 : 1)));
-      setMoneySelection({ start: nextPosition, end: nextPosition });
-    } else {
-      const nextPosition = commaIndex >= 0 ? commaIndex : formatted.length;
-      setMoneySelection({ start: nextPosition, end: nextPosition });
-    }
+    const formatted = formatMoneyDigitsInput(text);
+    const nextPosition = formatted.length;
+    setMoneySelection({ start: nextPosition, end: nextPosition });
     onChange(formatted);
   };
 
@@ -1473,16 +1635,13 @@ function Field({ label, value, onChange, placeholder, keyboardType, secureTextEn
     onChangeText={isMoney ? changeMoney : onChange}
     onFocus={() => {
       if (!isMoney) return;
-      const commaIndex = value.indexOf(",");
-      const position = commaIndex >= 0 ? commaIndex : value.length;
-      setEditingCents(false);
+      const position = value.length;
       setMoneySelection({ start: position, end: position });
     }}
     onSelectionChange={isMoney ? (event) => {
       const selection = event.nativeEvent.selection;
-      const commaIndex = value.indexOf(",");
-      setEditingCents(commaIndex >= 0 && selection.start > commaIndex);
-      setMoneySelection(selection);
+      const position = value.length;
+      if (selection.start !== position || selection.end !== position) setMoneySelection({ start: position, end: position });
     } : undefined}
     selection={isMoney ? moneySelection : undefined}
     placeholder={placeholder}
@@ -1499,9 +1658,11 @@ function CategoryChip({ category, kind, selected, onPress }: { category: string;
   return <Pressable style={[styles.chip, { borderColor: visual.border }, selected && { backgroundColor: visual.color, borderColor: visual.color }]} onPress={onPress} accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel={`Categoria ${category}`}><MaterialCommunityIcons name={visual.icon} size={15} color={selected ? "#FFFFFF" : visual.color} /><Text style={[styles.chipText, selected && styles.chipTextActive]}>{category}</Text></Pressable>;
 }
 
-function EntryModal({ visible, wallets, item, onClose, onSave, onDelete }: { visible: boolean; wallets: Wallet[]; item: Entry | null; onClose: () => void; onSave: (entry: Omit<Entry, "id">) => void; onDelete?: () => void }) {
+function EntryModal({ visible, wallets, cards, item, onClose, onSave, onDelete }: { visible: boolean; wallets: Wallet[]; cards: CreditCard[]; item: Entry | null; onClose: () => void; onSave: (entry: Omit<Entry, "id">) => void; onDelete?: () => void }) {
   const today = new Date();
   const [kind, setKind] = useState<EntryKind>("expense"); const [title, setTitle] = useState(""); const [value, setValue] = useState(""); const [category, setCategory] = useState(expenseCategories[0]!); const [walletId, setWalletId] = useState(wallets[0]?.id ?? "");
+  const [paymentSource, setPaymentSource] = useState<"wallet" | "card">("wallet");
+  const [cardId, setCardId] = useState(cards[0]?.id ?? "");
   const [referenceMonth, setReferenceMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
   const [referenceDay, setReferenceDay] = useState(String(today.getDate()));
   const activeCategories = categoriesByKind[kind];
@@ -1522,11 +1683,21 @@ function EntryModal({ visible, wallets, item, onClose, onSave, onDelete }: { vis
     setValue(item ? formatMoneyInput(String(item.value).replace(".", ",")) : "");
     setCategory(item?.category && itemCategories.includes(item.category) ? item.category : itemCategories[0]!);
     setWalletId(item?.walletId ?? wallets[0]?.id ?? "");
+    setPaymentSource(item?.cardId ? "card" : "wallet");
+    setCardId(item?.cardId ?? cards[0]?.id ?? "");
     setReferenceMonth(new Date(itemDate.getFullYear(), itemDate.getMonth(), 1));
     setReferenceDay(String(itemDate.getDate()));
-  }, [visible, item, wallets]);
-  const changeKind = (nextKind: EntryKind) => { setKind(nextKind); setCategory((current) => categoriesByKind[nextKind].includes(current) ? current : categoriesByKind[nextKind][0]!); };
-  const save = () => { const parsed = Number(value.replace(",", ".")); if (title.trim() && parsed > 0 && walletId && validDate) { onSave({ title: title.trim(), value: parsed, kind, category, walletId, createdAt: referenceDate.toISOString() }); } };
+  }, [visible, item, wallets, cards]);
+  const changeKind = (nextKind: EntryKind) => { setKind(nextKind); if (nextKind === "income") setPaymentSource("wallet"); setCategory((current) => categoriesByKind[nextKind].includes(current) ? current : categoriesByKind[nextKind][0]!); };
+  const selectedCard = cards.find((card) => card.id === cardId);
+  const validPaymentSource = kind === "income" || paymentSource === "wallet" ? Boolean(walletId) : Boolean(selectedCard);
+  const save = () => {
+    const parsed = parseMoneyInput(value);
+    if (!title.trim() || parsed <= 0 || !validPaymentSource || !validDate) return;
+    const isCardPurchase = kind === "expense" && paymentSource === "card" && selectedCard;
+    const dueDate = isCardPurchase ? getInvoiceDueDate(selectedCard, referenceDate).toISOString() : undefined;
+    onSave({ title: title.trim(), value: parsed, kind, category, walletId: isCardPurchase ? selectedCard.paymentWalletId : walletId, createdAt: referenceDate.toISOString(), cardId: isCardPurchase ? selectedCard.id : undefined, invoiceDueDate: dueDate, invoicePaymentKey: item?.invoicePaymentKey });
+  };
   return <Sheet visible={visible} title={item ? "Editar movimentação" : "Novo lançamento"} subtitle={item ? "Corrija os dados sem criar outro lançamento." : "Conta pra gente por onde o dinheiro passeou."} onClose={onClose}>
     <View style={styles.segment}><Pressable style={[styles.segmentItem, kind === "expense" && styles.segmentActive]} onPress={() => changeKind("expense")}><Text style={[styles.segmentText, kind === "expense" && styles.segmentActiveText]}>Gasto</Text></Pressable><Pressable style={[styles.segmentItem, kind === "income" && styles.segmentActive]} onPress={() => changeKind("income")}><Text style={[styles.segmentText, kind === "income" && styles.segmentActiveText]}>Entrada</Text></Pressable></View>
     <Field label={kind === "income" ? "De onde veio?" : "O que foi?"} value={title} onChange={setTitle} placeholder={kind === "income" ? "Ex.: pagamento de projeto" : "Ex.: almoço, mercado..."} />
@@ -1542,8 +1713,9 @@ function EntryModal({ visible, wallets, item, onClose, onSave, onDelete }: { vis
     </View>
     {!validDate && <Text style={styles.dateError}>{parsedDay > maxDay ? `Esse mês tem apenas ${maxDay} dias.` : referenceDate > todayEnd ? "Lançamentos futuros devem ser criados em Planejados." : "Informe um dia válido."}</Text>}
     <Text style={styles.fieldLabel}>{kind === "income" ? "Tipo de entrada" : "Categoria"}</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>{activeCategories.map(c => <CategoryChip key={c} category={c} kind={kind} selected={category === c} onPress={() => setCategory(c)} />)}</ScrollView>
-    <Text style={styles.fieldLabel}>Carteira</Text><View style={styles.walletOptions}>{wallets.map(w => <Pressable key={w.id} style={[styles.walletOption, walletId === w.id && styles.walletOptionActive]} onPress={() => setWalletId(w.id)}><View style={[styles.colorDot, { backgroundColor: w.color }]} /><Text style={styles.walletOptionText}>{w.name}</Text>{walletId === w.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
-    <PrimaryButton label={item ? "Salvar alterações" : "Salvar lançamento"} onPress={save} disabled={!title.trim() || !value || !validDate || !walletId} />
+    {kind === "expense" && <><Text style={styles.fieldLabel}>Como pagou?</Text><View style={styles.segment}><Pressable style={[styles.segmentItem, paymentSource === "wallet" && styles.segmentActive]} onPress={() => setPaymentSource("wallet")}><Text style={[styles.segmentText, paymentSource === "wallet" && styles.segmentActiveText]}>Dinheiro / débito</Text></Pressable><Pressable style={[styles.segmentItem, paymentSource === "card" && styles.segmentActive]} onPress={() => setPaymentSource("card")}><Text style={[styles.segmentText, paymentSource === "card" && styles.segmentActiveText]}>Cartão de crédito</Text></Pressable></View></>}
+    {(kind === "income" || paymentSource === "wallet") ? <><Text style={styles.fieldLabel}>Carteira</Text><View style={styles.walletOptions}>{wallets.map(w => <Pressable key={w.id} style={[styles.walletOption, walletId === w.id && styles.walletOptionActive]} onPress={() => setWalletId(w.id)}><View style={[styles.colorDot, { backgroundColor: w.color }]} /><Text style={styles.walletOptionText}>{w.name}</Text>{walletId === w.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View></> : <><Text style={styles.fieldLabel}>Cartão</Text><View style={styles.walletOptions}>{cards.map(card => <Pressable key={card.id} style={[styles.walletOption, cardId === card.id && styles.walletOptionActive]} onPress={() => setCardId(card.id)}><View style={[styles.colorDot, { backgroundColor: card.color }]} /><View style={styles.flex}><Text style={styles.walletOptionText}>{card.name}</Text><Text style={styles.cardOptionMeta}>Fecha dia {card.closingDay} · vence dia {card.dueDay}</Text></View>{cardId === card.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>{!cards.length && <Text style={styles.dateError}>Crie um cartão em Carteiras antes de lançar uma compra no crédito.</Text>}{selectedCard && <View style={styles.invoicePreview}><Feather name="calendar" size={15} color={COLORS.grape} /><Text style={styles.invoicePreviewText}>Esta compra entra na fatura de {getInvoiceDueDate(selectedCard, referenceDate).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}.</Text></View>}</>}
+    <PrimaryButton label={item ? "Salvar alterações" : "Salvar lançamento"} onPress={save} disabled={!title.trim() || !value || !validDate || !validPaymentSource} />
     {item && onDelete && <Pressable style={styles.deleteEntryButton} onPress={onDelete}><Feather name="trash-2" size={17} color={COLORS.danger} /><Text style={styles.deleteEntryButtonText}>Excluir {item.kind === "income" ? "entrada" : "gasto"}</Text></Pressable>}
   </Sheet>;
 }
@@ -1559,6 +1731,59 @@ function WalletModal({ visible, item, onClose, onSave, onDelete }: { visible: bo
     <View style={styles.walletColorPalette}>{walletPalette.map((option) => <Pressable key={option} accessibilityRole="radio" accessibilityState={{ checked: color === option }} accessibilityLabel={option === "#111111" ? "Cor preta" : `Cor ${option}`} style={[styles.walletColorOption, { backgroundColor: option }, color === option && styles.walletColorOptionActive]} onPress={() => setColor(option)}>{color === option && <Feather name="check" size={18} color="#FFFFFF" />}</Pressable>)}</View>
     <PrimaryButton label={item ? "Salvar alterações" : "Criar carteira"} onPress={save} disabled={!name.trim()} />
     {item && onDelete && <Pressable style={styles.deleteWalletButton} onPress={onDelete}><Feather name="trash-2" size={16} color={COLORS.danger} /><Text style={styles.deleteWalletButtonText}>Excluir carteira</Text></Pressable>}
+  </Sheet>;
+}
+
+function CreditCardModal({ visible, wallets, item, onClose, onSave, onDelete }: { visible: boolean; wallets: Wallet[]; item: CreditCard | null; onClose: () => void; onSave: (card: Omit<CreditCard, "id" | "paidInvoiceKeys">) => void; onDelete?: () => void }) {
+  const [name, setName] = useState("");
+  const [limit, setLimit] = useState("");
+  const [closingDay, setClosingDay] = useState("");
+  const [dueDay, setDueDay] = useState("");
+  const [color, setColor] = useState(walletPalette[2]!);
+  const [paymentWalletId, setPaymentWalletId] = useState(wallets[0]?.id ?? "");
+  useEffect(() => {
+    if (!visible) return;
+    setName(item?.name ?? "");
+    setLimit(item ? formatMoneyInput(String(item.limit).replace(".", ",")) : "");
+    setClosingDay(item ? String(item.closingDay) : "");
+    setDueDay(item ? String(item.dueDay) : "");
+    setColor(item?.color ?? walletPalette[2]!);
+    setPaymentWalletId(item?.paymentWalletId ?? wallets[0]?.id ?? "");
+  }, [visible, item, wallets]);
+  const parsedLimit = parseMoneyInput(limit);
+  const parsedClosingDay = Number(closingDay);
+  const parsedDueDay = Number(dueDay);
+  const valid = name.trim() && parsedLimit > 0 && parsedClosingDay >= 1 && parsedClosingDay <= 31 && parsedDueDay >= 1 && parsedDueDay <= 31 && paymentWalletId;
+  return <Sheet visible={visible} title={item ? "Editar cartão" : "Novo cartão de crédito"} subtitle="Fechamento e vencimento dizem qual salário pagará cada compra." onClose={onClose}>
+    <Field label="Nome do cartão" value={name} onChange={setName} placeholder="Ex.: Nubank" />
+    <Field label="Limite" value={limit} onChange={setLimit} placeholder="R$ 5.000,00" keyboardType="decimal-pad" money />
+    <View style={styles.cardDayFields}><View style={styles.flex}><Field label="Dia de fechamento" value={closingDay} onChange={setClosingDay} placeholder="Ex.: 20" keyboardType="number-pad" /></View><View style={styles.flex}><Field label="Dia de vencimento" value={dueDay} onChange={setDueDay} placeholder="Ex.: 27" keyboardType="number-pad" /></View></View>
+    <Text style={styles.fieldLabel}>Conta usada para pagar a fatura</Text>
+    <View style={styles.walletOptions}>{wallets.map((wallet) => <Pressable key={wallet.id} style={[styles.walletOption, paymentWalletId === wallet.id && styles.walletOptionActive]} onPress={() => setPaymentWalletId(wallet.id)}><View style={[styles.colorDot, { backgroundColor: wallet.color }]} /><Text style={styles.walletOptionText}>{wallet.name}</Text>{paymentWalletId === wallet.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
+    {!wallets.length && <Text style={styles.dateError}>Crie uma carteira para indicar de onde a fatura será paga.</Text>}
+    <Text style={styles.fieldLabel}>Cor do cartão</Text>
+    <View style={styles.walletColorPalette}>{walletPalette.map((option) => <Pressable key={option} style={[styles.walletColorOption, { backgroundColor: option }, color === option && styles.walletColorOptionActive]} onPress={() => setColor(option)}>{color === option && <Feather name="check" size={18} color="#FFFFFF" />}</Pressable>)}</View>
+    <PrimaryButton label={item ? "Salvar alterações" : "Criar cartão"} onPress={() => valid && onSave({ name: name.trim(), limit: parsedLimit, closingDay: parsedClosingDay, dueDay: parsedDueDay, color, paymentWalletId })} disabled={!valid} />
+    {item && onDelete && <Pressable style={styles.deleteWalletButton} onPress={onDelete}><Feather name="trash-2" size={16} color={COLORS.danger} /><Text style={styles.deleteWalletButtonText}>Excluir cartão</Text></Pressable>}
+  </Sheet>;
+}
+
+function FinancialSettingsModal({ visible, settings, onClose, onSave }: { visible: boolean; settings: FinancialSettings; onClose: () => void; onSave: (settings: FinancialSettings) => void }) {
+  const [salaryDay, setSalaryDay] = useState("");
+  const [income, setIncome] = useState("");
+  useEffect(() => {
+    if (!visible) return;
+    setSalaryDay(String(settings.salaryDay));
+    setIncome(settings.projectedMonthlyIncome ? formatMoneyInput(String(settings.projectedMonthlyIncome).replace(".", ",")) : "");
+  }, [visible, settings]);
+  const parsedDay = Number(salaryDay);
+  const parsedIncome = parseMoneyInput(income);
+  const valid = parsedDay >= 1 && parsedDay <= 31 && parsedIncome > 0;
+  return <Sheet visible={visible} title="Ciclo do salário" subtitle="O salário futuro serve para projeção e não aumenta o saldo de hoje." onClose={onClose}>
+    <View style={styles.cycleExplain}><MaterialCommunityIcons name="calendar-outline" size={24} color={COLORS.grape} /><Text style={styles.cycleExplainText}>O Nenero reservará, para cada salário, as faturas e contas com vencimento até o recebimento seguinte.</Text></View>
+    <Field label="Salário líquido previsto" value={income} onChange={setIncome} placeholder="R$ 5.000,00" keyboardType="decimal-pad" money />
+    <Field label="Dia em que o salário cai" value={salaryDay} onChange={setSalaryDay} placeholder="Ex.: 5" keyboardType="number-pad" />
+    <PrimaryButton label="Salvar ciclo" onPress={() => valid && onSave({ salaryDay: parsedDay, projectedMonthlyIncome: parsedIncome })} disabled={!valid} />
   </Sheet>;
 }
 
@@ -1749,7 +1974,7 @@ function LifeSpentCalculatorModal({ visible, entries, goal, savingsPots, onClose
     entry.title.toLocaleLowerCase("pt-BR").includes("salario")
   );
   const monthlySalary = monthEntries.filter(isSalary).reduce((sum, entry) => sum + entry.value, 0);
-  const monthlyExpenses = monthEntries.filter(entry => entry.kind === "expense").reduce((sum, entry) => sum + entry.value, 0);
+  const monthlyExpenses = monthEntries.filter(entry => entry.kind === "expense" && !entry.invoicePaymentKey).reduce((sum, entry) => sum + entry.value, 0);
   const price = Number(priceText.replace(",", "."));
   const monthlyHours = Number(monthlyHoursText);
   const hourlyIncome = monthlyHours > 0 ? monthlySalary / monthlyHours : 0;
@@ -1868,9 +2093,10 @@ Não invente necessidade, parcelamento, juros ou utilidade do produto.
   </Sheet>;
 }
 
-function BankImportModal({ visible, wallets, existingEntries, onClose, onImport }: {
+function BankImportModal({ visible, wallets, cards, existingEntries, onClose, onImport }: {
   visible: boolean;
   wallets: Wallet[];
+  cards: CreditCard[];
   existingEntries: Entry[];
   onClose: () => void;
   onImport: (entries: Omit<Entry, "id">[]) => void;
@@ -1878,6 +2104,8 @@ function BankImportModal({ visible, wallets, existingEntries, onClose, onImport 
   const [drafts, setDrafts] = useState<BankImportDraft[]>([]);
   const [fileInfo, setFileInfo] = useState<{ fileName: string; bankName: string; ignoredRows: number; validationMessage?: string } | null>(null);
   const [walletId, setWalletId] = useState("");
+  const [cardId, setCardId] = useState("");
+  const [invoiceMonth, setInvoiceMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [reading, setReading] = useState(false);
   const [error, setError] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -1886,10 +2114,12 @@ function BankImportModal({ visible, wallets, existingEntries, onClose, onImport 
     setDrafts([]);
     setFileInfo(null);
     setWalletId(wallets[0]?.id ?? "");
+    setCardId(cards[0]?.id ?? "");
+    setInvoiceMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
     setReading(false);
     setError("");
     setExpandedId(null);
-  }, [visible]);
+  }, [visible, wallets, cards]);
   const loadFile = async (file: File) => {
     if (file.size > 8 * 1024 * 1024) throw new Error("Esse arquivo passou de 8 MB. Exporte um período menor e tente novamente.");
     const isPdf = file.type === "application/pdf" || file.name.toLocaleLowerCase().endsWith(".pdf");
@@ -1929,9 +2159,12 @@ function BankImportModal({ visible, wallets, existingEntries, onClose, onImport 
   const income = selected.filter((draft) => draft.kind === "income").reduce((sum, draft) => sum + draft.value, 0);
   const expenses = selected.filter((draft) => draft.kind === "expense").reduce((sum, draft) => sum + draft.value, 0);
   const invalid = selected.some((draft) => !draft.title.trim());
+  const invoiceImport = fileInfo?.bankName.includes("Fatura") ?? false;
+  const selectedCard = cards.find((card) => card.id === cardId);
   const submit = () => {
-    if (!fileInfo || !walletId || !selected.length || invalid) return;
-    onImport(selected.map((draft) => ({ title: draft.title.trim(), value: draft.value, kind: draft.kind, category: draft.category, walletId, createdAt: draft.createdAt, importId: draft.importId, importSource: fileInfo.bankName })));
+    if (!fileInfo || !selected.length || invalid || (invoiceImport ? !selectedCard : !walletId)) return;
+    const dueDate = selectedCard ? dateAtNoon(invoiceMonth.getFullYear(), invoiceMonth.getMonth(), selectedCard.dueDay).toISOString() : undefined;
+    onImport(selected.map((draft) => ({ title: draft.title.trim(), value: draft.value, kind: draft.kind, category: draft.category, walletId: invoiceImport && selectedCard ? selectedCard.paymentWalletId : walletId, createdAt: draft.createdAt, cardId: invoiceImport && draft.kind === "expense" ? selectedCard?.id : undefined, invoiceDueDate: invoiceImport && draft.kind === "expense" ? dueDate : undefined, importId: draft.importId, importSource: fileInfo.bankName })));
   };
   return <Sheet visible={visible} title="Importar extrato ou fatura" subtitle="O banco entrega as linhas. Você dá a palavra final." onClose={onClose}>
     {!fileInfo ? <>
@@ -1946,9 +2179,10 @@ function BankImportModal({ visible, wallets, existingEntries, onClose, onImport 
     </> : <>
       <View style={styles.bankFileSummary}><MaterialCommunityIcons name="bank-outline" size={24} color={COLORS.grape} /><View style={styles.flex}><Text style={styles.bankFileBank}>{fileInfo.bankName}</Text><Text style={styles.bankFileName} numberOfLines={1}>{fileInfo.fileName}</Text></View><Pressable style={styles.bankFileChange} onPress={selectFile}><Text style={styles.bankFileChangeText}>Trocar</Text></Pressable></View>
       {fileInfo.validationMessage ? <View style={fileInfo.validationMessage.startsWith("Atenção") ? styles.bankReviewNotice : styles.bankImportSafety}><Feather name={fileInfo.validationMessage.startsWith("Atenção") ? "alert-triangle" : "check-circle"} size={17} color={fileInfo.validationMessage.startsWith("Atenção") ? COLORS.warning : COLORS.success} /><Text style={fileInfo.validationMessage.startsWith("Atenção") ? styles.bankReviewNoticeText : styles.bankImportSafetyText}>{fileInfo.validationMessage}</Text></View> : null}
-      <Text style={styles.fieldLabel}>Em qual carteira esse extrato entra?</Text>
-      <View style={styles.walletOptions}>{wallets.map((wallet) => <Pressable key={wallet.id} style={[styles.walletOption, walletId === wallet.id && styles.walletOptionActive]} onPress={() => setWalletId(wallet.id)}><View style={[styles.colorDot, { backgroundColor: wallet.color }]} /><Text style={styles.walletOptionText}>{wallet.name}</Text>{walletId === wallet.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
-      {!wallets.length && <View style={styles.bankImportError}><Text style={styles.bankImportErrorText}>Crie uma carteira antes de importar.</Text></View>}
+      <Text style={styles.fieldLabel}>{invoiceImport ? "A qual cartão pertence esta fatura?" : "Em qual carteira esse extrato entra?"}</Text>
+      <View style={styles.walletOptions}>{(invoiceImport ? cards : wallets).map((source) => <Pressable key={source.id} style={[styles.walletOption, (invoiceImport ? cardId : walletId) === source.id && styles.walletOptionActive]} onPress={() => invoiceImport ? setCardId(source.id) : setWalletId(source.id)}><View style={[styles.colorDot, { backgroundColor: source.color }]} /><Text style={styles.walletOptionText}>{source.name}</Text>{(invoiceImport ? cardId : walletId) === source.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
+      {invoiceImport && <><Text style={styles.fieldLabel}>Mês de vencimento da fatura</Text><View style={styles.referenceMonthPicker}><Pressable style={styles.referenceArrow} onPress={() => setInvoiceMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}><Feather name="chevron-left" size={18} color={COLORS.grape} /></Pressable><Text style={styles.referenceMonthText}>{invoiceMonth.toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}</Text><Pressable style={styles.referenceArrow} onPress={() => setInvoiceMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}><Feather name="chevron-right" size={18} color={COLORS.grape} /></Pressable></View><Text style={styles.invoiceImportHint}>Todas as compras selecionadas entrarão juntas nesta fatura, inclusive parcelas antigas.</Text></>}
+      {!(invoiceImport ? cards.length : wallets.length) && <View style={styles.bankImportError}><Text style={styles.bankImportErrorText}>{invoiceImport ? "Crie o cartão em Carteiras antes de importar a fatura." : "Crie uma carteira antes de importar."}</Text></View>}
       <View style={styles.bankImportTotals}><View style={styles.bankImportTotalBlock}><Text style={styles.bankImportTotalLabel}>SELECIONADAS</Text><Text style={styles.bankImportTotalValue}>{selected.length}</Text></View><View style={styles.bankImportTotalBlock}><Text style={styles.bankImportTotalLabel}>ENTRADAS</Text><Text style={styles.bankImportTotalMoney}>+ {money(income)}</Text></View><View style={styles.bankImportTotalBlock}><Text style={styles.bankImportTotalLabel}>GASTOS</Text><Text style={styles.bankImportTotalMoney}>− {money(expenses)}</Text></View></View>
       {(drafts.some((draft) => draft.transferLike) || drafts.some((draft) => draft.duplicate) || fileInfo.ignoredRows > 0) && <View style={styles.bankReviewNotice}><MaterialCommunityIcons name="text-box-search-outline" size={19} color={COLORS.warning} /><Text style={styles.bankReviewNoticeText}>Linhas suspeitas, repetidas ou inválidas foram separadas. Revise antes de importar.</Text></View>}
       <View style={styles.bankReviewHeader}><Text style={styles.bankReviewTitle}>O que entra no Nenero?</Text><Pressable onPress={() => setDrafts((current) => current.map((draft) => ({ ...draft, selected: false })))}><Text style={styles.bankReviewActionText}>Limpar</Text></Pressable></View>
@@ -1962,7 +2196,7 @@ function BankImportModal({ visible, wallets, existingEntries, onClose, onImport 
         </View>;
       })}</View>
       {invalid && <Text style={styles.bankImportValidation}>Toda movimentação selecionada precisa ter um nome.</Text>}
-      <PrimaryButton label={`Importar ${selected.length} movimentações`} onPress={submit} disabled={!walletId || !selected.length || invalid} />
+      <PrimaryButton label={`Importar ${selected.length} movimentações`} onPress={submit} disabled={!(invoiceImport ? cardId : walletId) || !selected.length || invalid} />
     </>}
   </Sheet>;
 }
@@ -2391,6 +2625,23 @@ const createStyleDefinition = () => ({
   balanceAnalysisSummary: { color: "rgba(255,255,255,0.78)", fontSize: 11, lineHeight: 16, marginTop: 4 },
   whiteButton: { alignSelf: "flex-start", backgroundColor: "white", flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 14 },
   whiteButtonText: { color: "#532CB8", fontWeight: "800", fontSize: 13 },
+  salaryCycleCard: { backgroundColor: COLORS.surface, borderRadius: 24, borderWidth: 1, borderColor: COLORS.accentBorder, padding: 18, marginTop: 14, shadowColor: COLORS.grapeDark, shadowOpacity: 0.08, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 3 },
+  salaryCycleHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
+  salaryCycleEyebrow: { color: COLORS.grape, fontSize: 8, fontWeight: "900", letterSpacing: 1 },
+  salaryCycleDate: { color: COLORS.muted, fontSize: 10, fontWeight: "700", textTransform: "lowercase", marginTop: 4 },
+  salaryCycleSettings: { width: 36, height: 36, borderRadius: 13, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center" },
+  salaryCycleLabel: { color: COLORS.muted, fontSize: 11, fontWeight: "700", marginTop: 18 },
+  salaryCycleValue: { color: COLORS.ink, fontSize: 32, fontWeight: "900", letterSpacing: -1.1, marginTop: 2 },
+  salaryCycleValueDanger: { color: COLORS.danger },
+  salaryCycleTrack: { height: 7, borderRadius: 4, overflow: "hidden", backgroundColor: COLORS.surfaceMuted, marginTop: 12 },
+  salaryCycleTrackFill: { height: "100%", borderRadius: 4, backgroundColor: COLORS.lime },
+  salaryCycleBreakdown: { gap: 9, paddingTop: 15, marginTop: 15, borderTopWidth: 1, borderTopColor: COLORS.line },
+  salaryCycleLine: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  salaryCycleLineLabel: { flex: 1, color: COLORS.muted, fontSize: 10, fontWeight: "700" },
+  salaryCycleIncome: { color: COLORS.success, fontSize: 10, fontWeight: "900" },
+  salaryCycleExpense: { color: COLORS.danger, fontSize: 10, fontWeight: "900" },
+  salaryCycleEmpty: { minHeight: 44, borderRadius: 14, paddingHorizontal: 12, backgroundColor: COLORS.accentSurface, flexDirection: "row", alignItems: "center", gap: 8, marginTop: 14 },
+  salaryCycleEmptyText: { flex: 1, color: COLORS.grapeDark, fontSize: 9, lineHeight: 13, fontWeight: "800" },
   metricsRow: { flexDirection: "row", gap: 12, marginTop: 14 },
   metricCard: { flex: 1, padding: 16, borderRadius: 20 },
   metricIncomeCard: { backgroundColor: COLORS.successSurface, borderWidth: 1, borderColor: COLORS.successBorder },
@@ -2529,6 +2780,22 @@ const createStyleDefinition = () => ({
   walletDots: { color: "rgba(255,255,255,0.7)", letterSpacing: 2 },
   walletName: { color: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: "700", marginTop: 29 },
   walletBalance: { color: "white", fontSize: 26, fontWeight: "900", marginTop: 4, letterSpacing: -0.8 },
+  creditCardBlock: { marginBottom: 14 },
+  creditCardFace: { minHeight: 162, borderRadius: 25, padding: 20, shadowColor: COLORS.ink, shadowOpacity: 0.1, shadowRadius: 12, shadowOffset: { width: 0, height: 7 }, elevation: 4 },
+  creditCardAvailable: { color: "#FFFFFF", fontSize: 23, fontWeight: "900", letterSpacing: -0.7, marginTop: 3 },
+  creditCardMeta: { color: "rgba(255,255,255,0.72)", fontSize: 9, fontWeight: "700", marginTop: 7 },
+  invoiceList: { backgroundColor: COLORS.surface, borderWidth: 1, borderTopWidth: 0, borderColor: COLORS.line, borderBottomLeftRadius: 20, borderBottomRightRadius: 20, padding: 11, marginHorizontal: 9 },
+  invoiceRow: { minHeight: 62, flexDirection: "row", alignItems: "center", gap: 9, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: COLORS.line },
+  invoiceDateBadge: { width: 39, height: 43, borderRadius: 12, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center" },
+  invoiceDateDay: { color: COLORS.grapeDark, fontSize: 15, lineHeight: 17, fontWeight: "900" },
+  invoiceDateMonth: { color: COLORS.grape, fontSize: 7, fontWeight: "900", textTransform: "uppercase" },
+  invoiceTitle: { color: COLORS.ink, fontSize: 10, fontWeight: "900", textTransform: "capitalize" },
+  invoiceMeta: { color: COLORS.muted, fontSize: 8, marginTop: 3 },
+  invoiceValue: { color: COLORS.ink, fontSize: 10, fontWeight: "900" },
+  invoicePayButton: { minHeight: 31, borderRadius: 11, paddingHorizontal: 9, backgroundColor: COLORS.grape, flexDirection: "row", alignItems: "center", gap: 4 },
+  invoicePayButtonText: { color: "#FFFFFF", fontSize: 8, fontWeight: "900" },
+  invoiceReopenButton: { backgroundColor: COLORS.accentSurface },
+  invoiceReopenButtonText: { color: COLORS.grape },
   dashedButton: { height: 58, borderWidth: 1.5, borderStyle: "dashed", borderColor: COLORS.accentBorder, borderRadius: 18, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 },
   dashedText: { color: COLORS.grape, fontSize: 12, fontWeight: "800" },
   dreamWalletPressable: { borderRadius: 27, marginTop: 24, shadowColor: "#33245E", shadowOpacity: 0.2, shadowRadius: 18, shadowOffset: { width: 0, height: 10 }, elevation: 7 },
@@ -2655,6 +2922,13 @@ const createStyleDefinition = () => ({
   referenceMonthPicker: { flex: 1, height: 58, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.line, borderRadius: 15, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 7 },
   referenceArrow: { width: 34, height: 34, borderRadius: 11, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center" },
   referenceMonthText: { flex: 1, color: COLORS.ink, fontSize: 12, fontWeight: "900", textTransform: "capitalize", textAlign: "center" },
+  invoiceImportHint: { color: COLORS.muted, fontSize: 9, lineHeight: 14, marginTop: 7, marginBottom: 16 },
+  cardOptionMeta: { color: COLORS.muted, fontSize: 8, marginTop: 2 },
+  invoicePreview: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: COLORS.accentSurface, borderRadius: 13, padding: 11, marginBottom: 15 },
+  invoicePreviewText: { flex: 1, color: COLORS.grapeDark, fontSize: 9, lineHeight: 13, fontWeight: "700" },
+  cardDayFields: { flexDirection: "row", gap: 10 },
+  cycleExplain: { flexDirection: "row", alignItems: "flex-start", gap: 11, backgroundColor: COLORS.accentSurface, borderRadius: 17, padding: 14, marginBottom: 18 },
+  cycleExplainText: { flex: 1, color: COLORS.grapeDark, fontSize: 10, lineHeight: 15, fontWeight: "700" },
   dateError: { color: COLORS.danger, fontSize: 10, fontWeight: "700", marginBottom: 13 },
   segment: { backgroundColor: COLORS.surfaceMuted, borderRadius: 15, padding: 4, flexDirection: "row", marginBottom: 18 },
   segmentItem: { flex: 1, height: 41, alignItems: "center", justifyContent: "center", borderRadius: 12 },
