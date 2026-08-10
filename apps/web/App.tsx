@@ -1413,6 +1413,7 @@ function Tools({ onLifeCalculator }: { onLifeCalculator: () => void }) {
 function Movements({ entries, wallets, cards, onAdd, onEdit }: { entries: Entry[]; wallets: Wallet[]; cards: CreditCard[]; onAdd: () => void; onEdit: (entry: Entry) => void }) {
   const [kindFilter, setKindFilter] = useState<"all" | EntryKind>("all");
   const [walletFilter, setWalletFilter] = useState("all");
+  const [filtersVisible, setFiltersVisible] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const date = new Date();
     return new Date(date.getFullYear(), date.getMonth(), 1);
@@ -1445,41 +1446,55 @@ function Movements({ entries, wallets, cards, onAdd, onEdit }: { entries: Entry[
       </View>
       <View style={styles.summaryStrip}>
         <Text style={styles.summaryText}>{filteredEntries.length} {filteredEntries.length === 1 ? "lançamento encontrado" : "lançamentos encontrados"}</Text>
-        {hasFilters ? (
-          <Pressable style={styles.clearFilter} onPress={() => { setKindFilter("all"); setWalletFilter("all"); }}>
+        <Pressable
+          style={[styles.filterToggle, filtersVisible && styles.filterToggleActive]}
+          onPress={() => setFiltersVisible((visible) => !visible)}
+          accessibilityRole="button"
+          accessibilityLabel={filtersVisible ? "Ocultar filtros" : "Mostrar filtros"}
+          accessibilityState={{ expanded: filtersVisible }}
+        >
+          <Feather name="sliders" size={18} color={filtersVisible ? "#FFFFFF" : COLORS.grape} />
+          {hasFilters && <View style={styles.filterActiveDot} />}
+        </Pressable>
+      </View>
+
+      {filtersVisible && <View style={styles.filtersPanel}>
+        <View style={styles.filtersPanelHeader}>
+          <Text style={styles.filtersPanelTitle}>FILTRAR MOVIMENTOS</Text>
+          {hasFilters && <Pressable style={styles.clearFilter} onPress={() => { setKindFilter("all"); setWalletFilter("all"); }}>
             <Feather name="x" size={14} color={COLORS.grape} />
             <Text style={styles.clearFilterText}>Limpar</Text>
           </Pressable>
-        ) : <Feather name="sliders" size={18} color={COLORS.grape} />}
-      </View>
+          }
+        </View>
+        <Text style={styles.filterLabel}>TIPO</Text>
+        <View style={styles.filterRow}>
+          {([["all", "Todos"], ["expense", "Gastos"], ["income", "Entradas"]] as const).map(([value, label]) => (
+            <Pressable key={value} style={[styles.filterChip, kindFilter === value && styles.filterChipActive]} onPress={() => setKindFilter(value)}>
+              <Text style={[styles.filterChipText, kindFilter === value && styles.filterChipTextActive]}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
 
-      <Text style={styles.filterLabel}>TIPO</Text>
-      <View style={styles.filterRow}>
-        {([["all", "Todos"], ["expense", "Gastos"], ["income", "Entradas"]] as const).map(([value, label]) => (
-          <Pressable key={value} style={[styles.filterChip, kindFilter === value && styles.filterChipActive]} onPress={() => setKindFilter(value)}>
-            <Text style={[styles.filterChipText, kindFilter === value && styles.filterChipTextActive]}>{label}</Text>
+        <Text style={styles.filterLabel}>CARTEIRA</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
+          <Pressable style={[styles.filterChip, walletFilter === "all" && styles.filterChipActive]} onPress={() => setWalletFilter("all")}>
+            <Text style={[styles.filterChipText, walletFilter === "all" && styles.filterChipTextActive]}>Todas</Text>
           </Pressable>
-        ))}
-      </View>
-
-      <Text style={styles.filterLabel}>CARTEIRA</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-        <Pressable style={[styles.filterChip, walletFilter === "all" && styles.filterChipActive]} onPress={() => setWalletFilter("all")}>
-          <Text style={[styles.filterChipText, walletFilter === "all" && styles.filterChipTextActive]}>Todas</Text>
-        </Pressable>
-        {wallets.map(wallet => (
-          <Pressable key={wallet.id} style={[styles.filterChip, walletFilter === wallet.id && styles.filterChipActive]} onPress={() => setWalletFilter(wallet.id)}>
-            <View style={[styles.filterDot, { backgroundColor: wallet.color }]} />
-            <Text style={[styles.filterChipText, walletFilter === wallet.id && styles.filterChipTextActive]}>{wallet.name}</Text>
-          </Pressable>
-        ))}
-        {cards.map(card => (
-          <Pressable key={card.id} style={[styles.filterChip, walletFilter === card.id && styles.filterChipActive]} onPress={() => setWalletFilter(card.id)}>
-            <View style={[styles.filterDot, { backgroundColor: card.color }]} />
-            <Text style={[styles.filterChipText, walletFilter === card.id && styles.filterChipTextActive]}>{card.name}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
+          {wallets.map(wallet => (
+            <Pressable key={wallet.id} style={[styles.filterChip, walletFilter === wallet.id && styles.filterChipActive]} onPress={() => setWalletFilter(wallet.id)}>
+              <View style={[styles.filterDot, { backgroundColor: wallet.color }]} />
+              <Text style={[styles.filterChipText, walletFilter === wallet.id && styles.filterChipTextActive]}>{wallet.name}</Text>
+            </Pressable>
+          ))}
+          {cards.map(card => (
+            <Pressable key={card.id} style={[styles.filterChip, walletFilter === card.id && styles.filterChipActive]} onPress={() => setWalletFilter(card.id)}>
+              <View style={[styles.filterDot, { backgroundColor: card.color }]} />
+              <Text style={[styles.filterChipText, walletFilter === card.id && styles.filterChipTextActive]}>{card.name}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      </View>}
 
       {filteredEntries.length > 0 ? (
         <View style={styles.listCard}>
@@ -1657,15 +1672,21 @@ function PageHeader({ eyebrow, title, button, onPress, hideButton = false }: { e
 
 function EntryRow({ entry, wallet, card, last, onEdit }: { entry: Entry; wallet?: Wallet; card?: CreditCard; last: boolean; onEdit?: () => void }) {
   const visual = getCategoryVisual(entry.category, entry.kind);
+  const invoiceLabel = card && entry.invoiceDueDate
+    ? `${card.name} · fatura ${new Date(entry.invoiceDueDate).toLocaleDateString("pt-BR", { month: "short" })}`
+    : undefined;
   return (
     <View style={[styles.entryRow, !last && styles.entryBorder]}>
       <View style={[styles.entryIcon, { backgroundColor: visual.background, borderColor: visual.border }]}><MaterialCommunityIcons name={visual.icon} size={20} color={visual.color} /></View>
-      <View style={styles.flex}>
-        <Text style={styles.rowTitle}>{entry.title}</Text>
-        <View style={styles.entryMetaLine}><View style={[styles.entryCategoryBadge, { backgroundColor: visual.background }]}><Text style={[styles.entryCategoryBadgeText, { color: visual.color }]}>{entry.category}</Text></View><Text style={styles.entryDateText}>{new Date(entry.createdAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}</Text></View>
-        {(card || wallet) && <View style={styles.entryWallet}><View style={[styles.entryWalletDot, { backgroundColor: card?.color ?? wallet?.color }]} /><Text style={styles.entryWalletText}>{card ? `${card.name} · fatura ${new Date(entry.invoiceDueDate!).toLocaleDateString("pt-BR", { month: "short" })}` : wallet?.name}</Text></View>}
+      <View style={styles.entryContent}>
+        <Text style={styles.rowTitle} numberOfLines={1} ellipsizeMode="tail">{entry.title}</Text>
+        <Text style={styles.entryDateText}>{new Date(entry.createdAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}</Text>
+        {!card && wallet && <View style={styles.entryWallet}><View style={[styles.entryWalletDot, { backgroundColor: wallet.color }]} /><Text style={styles.entryWalletText} numberOfLines={1} ellipsizeMode="tail">{wallet.name}</Text></View>}
       </View>
-      <Text style={[styles.rowValue, entry.kind === "income" && styles.income]}>{entry.kind === "income" ? "+" : "−"} {money(entry.value)}</Text>
+      <View style={styles.entryAmountBlock}>
+        <Text style={[styles.rowValue, entry.kind === "income" && styles.income]} numberOfLines={1}>{entry.kind === "income" ? "+" : "−"} {money(entry.value)}</Text>
+        {invoiceLabel && <Text style={styles.entryInvoiceText} numberOfLines={1} ellipsizeMode="tail">{invoiceLabel}</Text>}
+      </View>
       {onEdit && <Pressable style={styles.editEntryButton} onPress={onEdit} accessibilityLabel={`Editar ${entry.title}`}><Feather name="edit-2" size={14} color={COLORS.grape} /></Pressable>}
     </View>
   );
@@ -2801,18 +2822,18 @@ const createStyleDefinition = () => ({
   listCard: { backgroundColor: COLORS.surface, borderRadius: 20, paddingHorizontal: 15, borderWidth: 1, borderColor: COLORS.line },
   entryRow: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 12 },
   entryBorder: { borderBottomWidth: 1, borderBottomColor: COLORS.line },
-  entryIcon: { width: 42, height: 42, borderRadius: 14, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  entryIcon: { width: 42, height: 42, borderRadius: 14, borderWidth: 1, alignItems: "center", justifyContent: "center", flexShrink: 0 },
   flex: { flex: 1 },
-  rowTitle: { color: COLORS.ink, fontSize: 13, fontWeight: "800" },
+  entryContent: { flex: 1, minWidth: 0 },
+  rowTitle: { color: COLORS.ink, fontSize: 13, fontWeight: "800", flexShrink: 1 },
   rowMeta: { color: COLORS.muted, fontSize: 10, marginTop: 4 },
-  entryMetaLine: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 5 },
-  entryCategoryBadge: { minHeight: 20, borderRadius: 9, paddingHorizontal: 7, alignItems: "center", justifyContent: "center" },
-  entryCategoryBadgeText: { fontSize: 8, lineHeight: 11, fontWeight: "900", letterSpacing: 0.25 },
-  entryDateText: { color: COLORS.muted, fontSize: 9, fontWeight: "700", textTransform: "lowercase" },
+  entryDateText: { color: COLORS.muted, fontSize: 9, fontWeight: "700", textTransform: "lowercase", marginTop: 5 },
   entryWallet: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 5 },
   entryWalletDot: { width: 6, height: 6, borderRadius: 3 },
-  entryWalletText: { color: COLORS.muted, fontSize: 9, fontWeight: "700" },
-  rowValue: { color: COLORS.ink, fontSize: 12, fontWeight: "900" },
+  entryWalletText: { color: COLORS.muted, fontSize: 9, fontWeight: "700", flexShrink: 1 },
+  entryAmountBlock: { flexShrink: 0, maxWidth: 118, alignItems: "flex-end" },
+  entryInvoiceText: { color: COLORS.muted, fontSize: 8, fontWeight: "700", marginTop: 5, textAlign: "right", maxWidth: 118 },
+  rowValue: { color: COLORS.ink, fontSize: 12, fontWeight: "900", textAlign: "right" },
   editEntryButton: { width: 32, height: 32, borderRadius: 11, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center" },
   income: { color: COLORS.success },
   tipCard: { flexDirection: "row", gap: 13, backgroundColor: COLORS.lime, borderRadius: 20, padding: 16, marginTop: 18, alignItems: "center" },
@@ -2831,6 +2852,12 @@ const createStyleDefinition = () => ({
   smallButtonText: { color: "white", fontSize: 11, fontWeight: "800" },
   summaryStrip: { height: 50, backgroundColor: COLORS.accentSurface, borderRadius: 16, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
   summaryText: { color: COLORS.grapeDark, fontSize: 12, fontWeight: "800" },
+  filterToggle: { width: 36, height: 36, borderRadius: 12, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "#D8CCF6", backgroundColor: COLORS.surface },
+  filterToggleActive: { backgroundColor: COLORS.grape, borderColor: COLORS.grape },
+  filterActiveDot: { position: "absolute", top: 5, right: 5, width: 7, height: 7, borderRadius: 4, backgroundColor: COLORS.lime, borderWidth: 1, borderColor: COLORS.surface },
+  filtersPanel: { backgroundColor: COLORS.accentSurface, borderWidth: 1, borderColor: COLORS.line, borderRadius: 18, padding: 14, marginBottom: 16 },
+  filtersPanelHeader: { minHeight: 24, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
+  filtersPanelTitle: { color: COLORS.ink, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
   clearFilter: { flexDirection: "row", alignItems: "center", gap: 3 },
   clearFilterText: { color: COLORS.grape, fontSize: 11, fontWeight: "900" },
   filterLabel: { color: COLORS.muted, fontSize: 9, fontWeight: "900", letterSpacing: 1.2, marginBottom: 7 },

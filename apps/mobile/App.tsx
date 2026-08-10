@@ -1466,17 +1466,12 @@ function EntryRow({ entry, wallet, last, onEdit }: { entry: Entry; wallet?: Wall
       <View style={[styles.entryIcon, { backgroundColor: visual.background, borderColor: visual.border }]}>
         <MaterialCommunityIcons name={visual.icon} size={20} color={visual.color} />
       </View>
-      <View style={styles.flex}>
-        <Text style={styles.rowTitle}>{entry.title}</Text>
-        <View style={styles.entryMetaLine}>
-          <View style={[styles.entryCategoryBadge, { backgroundColor: visual.background }]}>
-            <Text style={[styles.entryCategoryBadgeText, { color: visual.color }]}>{entry.category}</Text>
-          </View>
-          <Text style={styles.entryDateText}>{new Date(entry.createdAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}</Text>
-        </View>
-        {wallet && <View style={styles.entryWallet}><View style={[styles.entryWalletDot, { backgroundColor: wallet.color }]} /><Text style={styles.entryWalletText}>{wallet.name}</Text></View>}
+      <View style={styles.entryContent}>
+        <Text style={styles.rowTitle} numberOfLines={1} ellipsizeMode="tail">{entry.title}</Text>
+        <Text style={styles.entryDateText}>{new Date(entry.createdAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}</Text>
+        {wallet && <View style={styles.entryWallet}><View style={[styles.entryWalletDot, { backgroundColor: wallet.color }]} /><Text style={styles.entryWalletText} numberOfLines={1} ellipsizeMode="tail">{wallet.name}</Text></View>}
       </View>
-      <Text style={[styles.rowValue, entry.kind === "income" && styles.income]}>{entry.kind === "income" ? "+" : "−"} {money(entry.value)}</Text>
+      <Text style={[styles.rowValue, entry.kind === "income" && styles.income]} numberOfLines={1}>{entry.kind === "income" ? "+" : "−"} {money(entry.value)}</Text>
       {onEdit && <Pressable style={styles.editEntryButton} onPress={onEdit} accessibilityLabel={`Editar ${entry.title}`}><Feather name="edit-2" size={14} color={COLORS.grape} /></Pressable>}
     </View>
   );
@@ -2676,18 +2671,16 @@ const createStyleDefinition = () => ({
   listCard: { backgroundColor: COLORS.white, borderRadius: 20, paddingHorizontal: 15, borderWidth: 1, borderColor: COLORS.line },
   entryRow: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 12 },
   entryBorder: { borderBottomWidth: 1, borderBottomColor: COLORS.line },
-  entryIcon: { width: 42, height: 42, borderRadius: 14, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  entryIcon: { width: 42, height: 42, borderRadius: 14, borderWidth: 1, alignItems: "center", justifyContent: "center", flexShrink: 0 },
   flex: { flex: 1 },
-  rowTitle: { color: COLORS.ink, fontSize: 13, fontWeight: "800" },
+  entryContent: { flex: 1, minWidth: 0 },
+  rowTitle: { color: COLORS.ink, fontSize: 13, fontWeight: "800", flexShrink: 1 },
   rowMeta: { color: COLORS.muted, fontSize: 10, marginTop: 4 },
-  entryMetaLine: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 5 },
-  entryCategoryBadge: { minHeight: 20, borderRadius: 9, paddingHorizontal: 7, alignItems: "center", justifyContent: "center" },
-  entryCategoryBadgeText: { fontSize: 8, lineHeight: 11, fontWeight: "900", letterSpacing: 0.25 },
-  entryDateText: { color: COLORS.muted, fontSize: 9, fontWeight: "700", textTransform: "lowercase" },
+  entryDateText: { color: COLORS.muted, fontSize: 9, fontWeight: "700", textTransform: "lowercase", marginTop: 5 },
   entryWallet: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 5 },
   entryWalletDot: { width: 6, height: 6, borderRadius: 3 },
-  entryWalletText: { color: COLORS.muted, fontSize: 9, fontWeight: "700" },
-  rowValue: { color: COLORS.ink, fontSize: 12, fontWeight: "900" },
+  entryWalletText: { color: COLORS.muted, fontSize: 9, fontWeight: "700", flexShrink: 1 },
+  rowValue: { color: COLORS.ink, fontSize: 12, fontWeight: "900", flexShrink: 0, textAlign: "right" },
   editEntryButton: { width: 32, height: 32, borderRadius: 11, backgroundColor: "#F0EBFF", alignItems: "center", justifyContent: "center" },
   income: { color: "#65861E" },
   tipCard: { flexDirection: "row", gap: 13, backgroundColor: COLORS.lime, borderRadius: 20, padding: 16, marginTop: 18, alignItems: "center" },
