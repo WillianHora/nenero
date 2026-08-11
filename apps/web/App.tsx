@@ -41,6 +41,10 @@ type Entry = {
   invoicePaymentKey?: string;
   importId?: string;
   importSource?: string;
+  installmentKey?: string;
+  installmentNumber?: number;
+  installmentTotal?: number;
+  projectedInstallment?: boolean;
 };
 type BankImportDraft = ParsedBankTransaction & { selected: boolean; duplicate: boolean };
 type Wallet = { id: string; name: string; initial: number; color: string };
@@ -197,6 +201,21 @@ const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" 
 const money = (value: number) => brl.format(value);
 const uid = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const parseMoneyInput = (value: string) => Number(value.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", "."));
+const addMonthsClamped = (date: Date, amount: number) => {
+  const target = new Date(date.getFullYear(), date.getMonth() + amount, 1, 12);
+  target.setDate(Math.min(date.getDate(), new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate()));
+  return target;
+};
+const parseInstallment = (title: string) => {
+  const match = title.match(/\bparcela\s*(\d{1,2})\s*(?:\/|de)\s*(\d{1,2})\b/i) ?? title.match(/\b(\d{1,2})\/(\d{1,2})\s*$/);
+  if (!match) return null;
+  const number = Number(match[1]);
+  const total = Number(match[2]);
+  if (!Number.isInteger(number) || !Number.isInteger(total) || number < 1 || total < 2 || number > total || total > 48) return null;
+  const baseTitle = title.replace(/\s*[·(\-]?\s*parcela\s*\d{1,2}\s*(?:\/|de)\s*\d{1,2}\)?\s*$/i, "").replace(/\s+\d{1,2}\/\d{1,2}\s*$/, "").trim();
+  return { number, total, baseTitle: baseTitle || title };
+};
+const installmentIdentity = (cardId: string, title: string, total: number) => `${cardId}|${title.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR").replace(/[^a-z0-9]+/g, " ").trim()}|${total}`;
 const formatMoneyInput = (value: string) => {
   if (!value.trim()) return "";
   const parsed = parseMoneyInput(value);
@@ -247,11 +266,54 @@ const getInvoiceDueDate = (card: CreditCard, purchaseDate: string | Date) => {
   return dateAtNoon(closingMonth.getFullYear(), closingMonth.getMonth() + dueMonthOffset, card.dueDay);
 };
 const getEntryInvoiceDueDate = (entry: Entry, card: CreditCard) => {
-  // Em faturas importadas, o usuário escolhe explicitamente o mês de vencimento.
-  // Nos lançamentos manuais, a competência sempre acompanha a data da compra e o ciclo atual do cartão.
-  if (entry.importSource && entry.invoiceDueDate) return new Date(entry.invoiceDueDate);
+  // Toda compra, manual ou importada, segue a data de referência e o ciclo atual do cartão.
   return getInvoiceDueDate(card, entry.createdAt);
 };
+const expandManualInstallments = (entry: Omit<Entry, "id">, card: CreditCard, total: number): Omit<Entry, "id">[] => {
+  if (total <= 1) return [entry];
+  const baseTitle = parseInstallment(entry.title)?.baseTitle ?? entry.title;
+  const key = installmentIdentity(card.id, baseTitle, total);
+  const totalCents = Math.round(entry.value * 100);
+  const baseCents = Math.floor(totalCents / total);
+  const remainder = totalCents - baseCents * total;
+  const purchaseDate = new Date(entry.createdAt);
+  return Array.from({ length: total }, (_, index) => {
+    const installmentDate = addMonthsClamped(purchaseDate, index);
+    return {
+      ...entry,
+      title: `${baseTitle} · Parcela ${index + 1}/${total}`,
+      value: (baseCents + (index < remainder ? 1 : 0)) / 100,
+      createdAt: installmentDate.toISOString(),
+      invoiceDueDate: getInvoiceDueDate(card, installmentDate).toISOString(),
+      installmentKey: key,
+      installmentNumber: index + 1,
+      installmentTotal: total,
+      projectedInstallment: index > 0,
+    };
+  });
+};
+const expandImportedInstallments = (entries: Omit<Entry, "id">[]): Omit<Entry, "id">[] => entries.flatMap((entry) => {
+  if (!entry.cardId || !entry.invoiceDueDate) return [entry];
+  const installment = parseInstallment(entry.title);
+  if (!installment) return [entry];
+  const key = installmentIdentity(entry.cardId, installment.baseTitle, installment.total);
+  const currentDueDate = new Date(entry.invoiceDueDate);
+  return Array.from({ length: installment.total - installment.number + 1 }, (_, offset) => {
+    const number = installment.number + offset;
+    const dueDate = addMonthsClamped(currentDueDate, offset);
+    return {
+      ...entry,
+      title: `${installment.baseTitle} · Parcela ${number}/${installment.total}`,
+      createdAt: offset === 0 ? entry.createdAt : addMonthsClamped(new Date(entry.createdAt), offset).toISOString(),
+      invoiceDueDate: dueDate.toISOString(),
+      importId: offset === 0 ? entry.importId : `${entry.importId}:projected-${number}`,
+      installmentKey: key,
+      installmentNumber: number,
+      installmentTotal: installment.total,
+      projectedInstallment: offset > 0,
+    };
+  });
+});
 const getNextSalaryCycle = (settings: FinancialSettings, today = new Date()) => {
   const thisMonthSalary = dateAtNoon(today.getFullYear(), today.getMonth(), settings.salaryDay);
   const start = today < thisMonthSalary ? thisMonthSalary : dateAtNoon(today.getFullYear(), today.getMonth() + 1, settings.salaryDay);
@@ -832,7 +894,11 @@ Antes de responder, confira silenciosamente:
   };
 
   const addEntry = (entry: Omit<Entry, "id">) => {
-    setEntries((current) => [{ ...entry, id: uid() }, ...current]);
+    const card = entry.cardId ? creditCards.find((item) => item.id === entry.cardId) : undefined;
+    const expanded = card && (entry.installmentTotal ?? 1) > 1
+      ? expandManualInstallments(entry, card, entry.installmentTotal!)
+      : [entry];
+    setEntries((current) => [...expanded.map((item) => ({ ...item, id: uid() })), ...current]);
     setModal(null);
   };
 
@@ -1241,7 +1307,14 @@ Antes de responder, confira silenciosamente:
         existingEntries={entries}
         onClose={() => setModal(null)}
         onImport={(importedEntries) => {
-          setEntries((current) => [...importedEntries.map((entry) => ({ ...entry, id: uid() })), ...current]);
+          const expanded = expandImportedInstallments(importedEntries);
+          const incomingInstallments = new Set(expanded
+            .filter((entry) => !entry.projectedInstallment && entry.installmentKey && entry.installmentNumber)
+            .map((entry) => `${entry.installmentKey}|${entry.installmentNumber}`));
+          setEntries((current) => [
+            ...expanded.map((entry) => ({ ...entry, id: uid() })),
+            ...current.filter((entry) => !entry.projectedInstallment || !entry.installmentKey || !entry.installmentNumber || !incomingInstallments.has(`${entry.installmentKey}|${entry.installmentNumber}`)),
+          ]);
           setAnalysis(null);
           setModal(null);
         }}
@@ -1771,6 +1844,7 @@ function EntryModal({ visible, wallets, cards, item, onClose, onSave, onDelete }
   const [kind, setKind] = useState<EntryKind>("expense"); const [title, setTitle] = useState(""); const [value, setValue] = useState(""); const [category, setCategory] = useState(expenseCategories[0]!); const [walletId, setWalletId] = useState(wallets[0]?.id ?? "");
   const [paymentSource, setPaymentSource] = useState<"wallet" | "card">("wallet");
   const [cardId, setCardId] = useState(cards[0]?.id ?? "");
+  const [installmentCount, setInstallmentCount] = useState("1");
   const [referenceMonth, setReferenceMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
   const [referenceDay, setReferenceDay] = useState(String(today.getDate()));
   const activeCategories = categoriesByKind[kind];
@@ -1804,18 +1878,22 @@ function EntryModal({ visible, wallets, cards, item, onClose, onSave, onDelete }
     setWalletId(item?.walletId ?? wallets[0]?.id ?? "");
     setPaymentSource(item?.cardId ? "card" : "wallet");
     setCardId(item?.cardId ?? cards[0]?.id ?? "");
+    setInstallmentCount(String(item?.installmentTotal ?? 1));
     setReferenceMonth(new Date(itemDate.getFullYear(), itemDate.getMonth(), 1));
     setReferenceDay(String(itemDate.getDate()));
   }, [visible, item, wallets, cards]);
   const changeKind = (nextKind: EntryKind) => { setKind(nextKind); if (nextKind === "income") setPaymentSource("wallet"); setCategory((current) => categoriesByKind[nextKind].includes(current) ? current : categoriesByKind[nextKind][0]!); };
   const selectedCard = cards.find((card) => card.id === cardId);
+  const parsedInstallmentCount = Number(installmentCount);
+  const installmentInputActive = kind === "expense" && paymentSource === "card" && !item;
+  const validInstallmentCount = !installmentInputActive || (Number.isInteger(parsedInstallmentCount) && parsedInstallmentCount >= 1 && parsedInstallmentCount <= 48);
   const validPaymentSource = kind === "income" || paymentSource === "wallet" ? Boolean(walletId) : Boolean(selectedCard);
   const save = () => {
     const parsed = parseMoneyInput(value);
-    if (!title.trim() || parsed <= 0 || !validPaymentSource || !validDate) return;
+    if (!title.trim() || parsed <= 0 || !validPaymentSource || !validDate || !validInstallmentCount) return;
     const isCardPurchase = kind === "expense" && paymentSource === "card" && selectedCard;
     const dueDate = isCardPurchase ? getInvoiceDueDate(selectedCard, referenceDate).toISOString() : undefined;
-    onSave({ title: title.trim(), value: parsed, kind, category, walletId: isCardPurchase ? selectedCard.paymentWalletId : walletId, createdAt: referenceDate.toISOString(), cardId: isCardPurchase ? selectedCard.id : undefined, invoiceDueDate: dueDate, invoicePaymentKey: item?.invoicePaymentKey });
+    onSave({ title: title.trim(), value: parsed, kind, category, walletId: isCardPurchase ? selectedCard.paymentWalletId : walletId, createdAt: referenceDate.toISOString(), cardId: isCardPurchase ? selectedCard.id : undefined, invoiceDueDate: dueDate, invoicePaymentKey: item?.invoicePaymentKey, installmentKey: item?.installmentKey, installmentNumber: item?.installmentNumber, installmentTotal: isCardPurchase && !item && parsedInstallmentCount > 1 ? parsedInstallmentCount : item?.installmentTotal, projectedInstallment: item?.projectedInstallment });
   };
   return <Sheet visible={visible} title={item ? "Editar movimentação" : "Novo lançamento"} subtitle={item ? "Corrija os dados sem criar outro lançamento." : "Conta pra gente por onde o dinheiro passeou."} onClose={onClose}>
     <View style={styles.segment}><Pressable style={[styles.segmentItem, kind === "expense" && styles.segmentActive]} onPress={() => changeKind("expense")}><Text style={[styles.segmentText, kind === "expense" && styles.segmentActiveText]}>Gasto</Text></Pressable><Pressable style={[styles.segmentItem, kind === "income" && styles.segmentActive]} onPress={() => changeKind("income")}><Text style={[styles.segmentText, kind === "income" && styles.segmentActiveText]}>Entrada</Text></Pressable></View>
@@ -1833,8 +1911,21 @@ function EntryModal({ visible, wallets, cards, item, onClose, onSave, onDelete }
     {!validDate && <Text style={styles.dateError}>{parsedDay > maxDay ? `Esse mês tem apenas ${maxDay} dias.` : referenceDate > todayEnd ? "Lançamentos futuros devem ser criados em Planejados." : "Informe um dia válido."}</Text>}
     <Text style={styles.fieldLabel}>{kind === "income" ? "Tipo de entrada" : "Categoria"}</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>{activeCategories.map(c => <CategoryChip key={c} category={c} kind={kind} selected={category === c} onPress={() => setCategory(c)} />)}</ScrollView>
     {kind === "expense" && <><Text style={styles.fieldLabel}>Como pagou?</Text><View style={styles.segment}><Pressable style={[styles.segmentItem, paymentSource === "wallet" && styles.segmentActive]} onPress={() => setPaymentSource("wallet")}><Text style={[styles.segmentText, paymentSource === "wallet" && styles.segmentActiveText]}>Dinheiro / débito</Text></Pressable><Pressable style={[styles.segmentItem, paymentSource === "card" && styles.segmentActive]} onPress={() => setPaymentSource("card")}><Text style={[styles.segmentText, paymentSource === "card" && styles.segmentActiveText]}>Cartão de crédito</Text></Pressable></View></>}
-    {(kind === "income" || paymentSource === "wallet") ? <><Text style={styles.fieldLabel}>Carteira</Text><View style={styles.walletOptions}>{wallets.map(w => <Pressable key={w.id} style={[styles.walletOption, walletId === w.id && styles.walletOptionActive]} onPress={() => setWalletId(w.id)}><View style={[styles.colorDot, { backgroundColor: w.color }]} /><Text style={styles.walletOptionText}>{w.name}</Text>{walletId === w.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View></> : <><Text style={styles.fieldLabel}>Cartão</Text><View style={styles.walletOptions}>{cards.map(card => <Pressable key={card.id} style={[styles.walletOption, cardId === card.id && styles.walletOptionActive]} onPress={() => setCardId(card.id)}><View style={[styles.colorDot, { backgroundColor: card.color }]} /><View style={styles.flex}><Text style={styles.walletOptionText}>{card.name}</Text><Text style={styles.cardOptionMeta}>Fecha dia {card.closingDay} · vence dia {card.dueDay}</Text></View>{cardId === card.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>{!cards.length && <Text style={styles.dateError}>Crie um cartão em Carteiras antes de lançar uma compra no crédito.</Text>}{selectedCard && <View style={styles.invoicePreview}><Feather name="calendar" size={15} color={COLORS.grape} /><Text style={styles.invoicePreviewText}>Esta compra entra na fatura de {getInvoiceDueDate(selectedCard, referenceDate).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}.</Text></View>}</>}
-    <PrimaryButton label={item ? "Salvar alterações" : "Salvar lançamento"} onPress={save} disabled={!title.trim() || !value || !validDate || !validPaymentSource} />
+    {(kind === "income" || paymentSource === "wallet") ? <>
+      <Text style={styles.fieldLabel}>Carteira</Text>
+      <View style={styles.walletOptions}>{wallets.map(w => <Pressable key={w.id} style={[styles.walletOption, walletId === w.id && styles.walletOptionActive]} onPress={() => setWalletId(w.id)}><View style={[styles.colorDot, { backgroundColor: w.color }]} /><Text style={styles.walletOptionText}>{w.name}</Text>{walletId === w.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
+    </> : <>
+      <Text style={styles.fieldLabel}>Cartão</Text>
+      <View style={styles.walletOptions}>{cards.map(card => <Pressable key={card.id} style={[styles.walletOption, cardId === card.id && styles.walletOptionActive]} onPress={() => setCardId(card.id)}><View style={[styles.colorDot, { backgroundColor: card.color }]} /><View style={styles.flex}><Text style={styles.walletOptionText}>{card.name}</Text><Text style={styles.cardOptionMeta}>Fecha dia {card.closingDay} · vence dia {card.dueDay}</Text></View>{cardId === card.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
+      {!cards.length && <Text style={styles.dateError}>Crie um cartão em Carteiras antes de lançar uma compra no crédito.</Text>}
+      {!item && <>
+        <Field label="Número de parcelas" value={installmentCount} onChange={setInstallmentCount} placeholder="1" keyboardType="number-pad" />
+        {!validInstallmentCount && <Text style={styles.dateError}>Informe de 1 a 48 parcelas.</Text>}
+        {validInstallmentCount && parsedInstallmentCount > 1 && parseMoneyInput(value) > 0 && <Text style={styles.installmentPreview}>{parsedInstallmentCount} parcelas de aproximadamente {money(parseMoneyInput(value) / parsedInstallmentCount)}. O valor informado é o total da compra.</Text>}
+      </>}
+      {selectedCard && <View style={styles.invoicePreview}><Feather name="calendar" size={15} color={COLORS.grape} /><Text style={styles.invoicePreviewText}>A primeira parcela entra na fatura de {getInvoiceDueDate(selectedCard, referenceDate).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}.</Text></View>}
+    </>}
+    <PrimaryButton label={item ? "Salvar alterações" : "Salvar lançamento"} onPress={save} disabled={!title.trim() || !value || !validDate || !validPaymentSource || !validInstallmentCount} />
     {item && onDelete && <Pressable style={styles.deleteEntryButton} onPress={onDelete}><Feather name="trash-2" size={17} color={COLORS.danger} /><Text style={styles.deleteEntryButtonText}>Excluir {item.kind === "income" ? "entrada" : "gasto"}</Text></Pressable>}
   </Sheet>;
 }
@@ -2226,7 +2317,6 @@ function BankImportModal({ visible, wallets, cards, existingEntries, onClose, on
   const [fileInfo, setFileInfo] = useState<{ fileName: string; bankName: string; ignoredRows: number; validationMessage?: string } | null>(null);
   const [walletId, setWalletId] = useState("");
   const [cardId, setCardId] = useState("");
-  const [invoiceMonth, setInvoiceMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [reading, setReading] = useState(false);
   const [error, setError] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -2236,7 +2326,6 @@ function BankImportModal({ visible, wallets, cards, existingEntries, onClose, on
     setFileInfo(null);
     setWalletId(wallets[0]?.id ?? "");
     setCardId(cards[0]?.id ?? "");
-    setInvoiceMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
     setReading(false);
     setError("");
     setExpandedId(null);
@@ -2284,8 +2373,10 @@ function BankImportModal({ visible, wallets, cards, existingEntries, onClose, on
   const selectedCard = cards.find((card) => card.id === cardId);
   const submit = () => {
     if (!fileInfo || !selected.length || invalid || (invoiceImport ? !selectedCard : !walletId)) return;
-    const dueDate = selectedCard ? dateAtNoon(invoiceMonth.getFullYear(), invoiceMonth.getMonth(), selectedCard.dueDay).toISOString() : undefined;
-    onImport(selected.map((draft) => ({ title: draft.title.trim(), value: draft.value, kind: draft.kind, category: draft.category, walletId: invoiceImport && selectedCard ? selectedCard.paymentWalletId : walletId, createdAt: draft.createdAt, cardId: invoiceImport && draft.kind === "expense" ? selectedCard?.id : undefined, invoiceDueDate: invoiceImport && draft.kind === "expense" ? dueDate : undefined, importId: draft.importId, importSource: fileInfo.bankName })));
+    onImport(selected.map((draft) => {
+      const cardPurchase = invoiceImport && draft.kind === "expense" && selectedCard;
+      return { title: draft.title.trim(), value: draft.value, kind: draft.kind, category: draft.category, walletId: cardPurchase ? selectedCard.paymentWalletId : walletId, createdAt: draft.createdAt, cardId: cardPurchase ? selectedCard.id : undefined, invoiceDueDate: cardPurchase ? getInvoiceDueDate(selectedCard, draft.createdAt).toISOString() : undefined, importId: draft.importId, importSource: fileInfo.bankName };
+    }));
   };
   return <Sheet visible={visible} title="Importar extrato ou fatura" subtitle="O banco entrega as linhas. Você dá a palavra final." onClose={onClose}>
     {!fileInfo ? <>
@@ -2302,7 +2393,7 @@ function BankImportModal({ visible, wallets, cards, existingEntries, onClose, on
       {fileInfo.validationMessage ? <View style={fileInfo.validationMessage.startsWith("Atenção") ? styles.bankReviewNotice : styles.bankImportSafety}><Feather name={fileInfo.validationMessage.startsWith("Atenção") ? "alert-triangle" : "check-circle"} size={17} color={fileInfo.validationMessage.startsWith("Atenção") ? COLORS.warning : COLORS.success} /><Text style={fileInfo.validationMessage.startsWith("Atenção") ? styles.bankReviewNoticeText : styles.bankImportSafetyText}>{fileInfo.validationMessage}</Text></View> : null}
       <Text style={styles.fieldLabel}>{invoiceImport ? "A qual cartão pertence esta fatura?" : "Em qual carteira esse extrato entra?"}</Text>
       <View style={styles.walletOptions}>{(invoiceImport ? cards : wallets).map((source) => <Pressable key={source.id} style={[styles.walletOption, (invoiceImport ? cardId : walletId) === source.id && styles.walletOptionActive]} onPress={() => invoiceImport ? setCardId(source.id) : setWalletId(source.id)}><View style={[styles.colorDot, { backgroundColor: source.color }]} /><Text style={styles.walletOptionText}>{source.name}</Text>{(invoiceImport ? cardId : walletId) === source.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
-      {invoiceImport && <><Text style={styles.fieldLabel}>Mês de vencimento da fatura</Text><View style={styles.referenceMonthPicker}><Pressable style={styles.referenceArrow} onPress={() => setInvoiceMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}><Feather name="chevron-left" size={18} color={COLORS.grape} /></Pressable><Text style={styles.referenceMonthText}>{invoiceMonth.toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}</Text><Pressable style={styles.referenceArrow} onPress={() => setInvoiceMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}><Feather name="chevron-right" size={18} color={COLORS.grape} /></Pressable></View><Text style={styles.invoiceImportHint}>Todas as compras selecionadas entrarão juntas nesta fatura, inclusive parcelas antigas.</Text></>}
+      {invoiceImport && <View style={styles.invoiceCycleHint}><Feather name="calendar" size={15} color={COLORS.grape} /><Text style={styles.invoiceImportHint}>O vencimento de cada compra será calculado pela data de referência e pelo fechamento do cartão.</Text></View>}
       {!(invoiceImport ? cards.length : wallets.length) && <View style={styles.bankImportError}><Text style={styles.bankImportErrorText}>{invoiceImport ? "Crie o cartão em Carteiras antes de importar a fatura." : "Crie uma carteira antes de importar."}</Text></View>}
       <View style={styles.bankImportTotals}><View style={styles.bankImportTotalBlock}><Text style={styles.bankImportTotalLabel}>SELECIONADAS</Text><Text style={styles.bankImportTotalValue}>{selected.length}</Text></View><View style={styles.bankImportTotalBlock}><Text style={styles.bankImportTotalLabel}>ENTRADAS</Text><Text style={styles.bankImportTotalMoney}>+ {money(income)}</Text></View><View style={styles.bankImportTotalBlock}><Text style={styles.bankImportTotalLabel}>GASTOS</Text><Text style={styles.bankImportTotalMoney}>− {money(expenses)}</Text></View></View>
       {(drafts.some((draft) => draft.transferLike) || drafts.some((draft) => draft.duplicate) || fileInfo.ignoredRows > 0) && <View style={styles.bankReviewNotice}><MaterialCommunityIcons name="text-box-search-outline" size={19} color={COLORS.warning} /><Text style={styles.bankReviewNoticeText}>Linhas suspeitas, repetidas ou inválidas foram separadas. Revise antes de importar.</Text></View>}
@@ -3075,7 +3166,9 @@ const createStyleDefinition = () => ({
   referenceMonthPicker: { flex: 1, height: 58, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.line, borderRadius: 15, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 7 },
   referenceArrow: { width: 34, height: 34, borderRadius: 11, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center" },
   referenceMonthText: { flex: 1, color: COLORS.ink, fontSize: 12, fontWeight: "900", textTransform: "capitalize", textAlign: "center" },
-  invoiceImportHint: { color: COLORS.muted, fontSize: 9, lineHeight: 14, marginTop: 7, marginBottom: 16 },
+  invoiceCycleHint: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: COLORS.accentSurface, borderRadius: 13, padding: 11, marginBottom: 16 },
+  invoiceImportHint: { flex: 1, color: COLORS.muted, fontSize: 9, lineHeight: 14 },
+  installmentPreview: { color: COLORS.muted, fontSize: 9, lineHeight: 14, marginTop: -9, marginBottom: 14 },
   cardOptionMeta: { color: COLORS.muted, fontSize: 8, marginTop: 2 },
   invoicePreview: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: COLORS.accentSurface, borderRadius: 13, padding: 11, marginBottom: 15 },
   invoicePreviewText: { flex: 1, color: COLORS.grapeDark, fontSize: 9, lineHeight: 13, fontWeight: "700" },
