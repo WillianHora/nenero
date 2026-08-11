@@ -240,7 +240,8 @@ const monthKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth()
 const invoiceKey = (cardId: string, dueDate: string | Date) => `${cardId}:${monthKey(typeof dueDate === "string" ? new Date(dueDate) : dueDate)}`;
 const getInvoiceDueDate = (card: CreditCard, purchaseDate: string | Date) => {
   const purchase = typeof purchaseDate === "string" ? new Date(purchaseDate) : purchaseDate;
-  const closingMonthOffset = purchase.getDate() > card.closingDay ? 1 : 0;
+  // O dia de fechamento já pertence ao próximo ciclo da fatura.
+  const closingMonthOffset = purchase.getDate() >= card.closingDay ? 1 : 0;
   const closingMonth = new Date(purchase.getFullYear(), purchase.getMonth() + closingMonthOffset, 1);
   const dueMonthOffset = card.dueDay <= card.closingDay ? 1 : 0;
   return dateAtNoon(closingMonth.getFullYear(), closingMonth.getMonth() + dueMonthOffset, card.dueDay);
@@ -1770,7 +1771,18 @@ function EntryModal({ visible, wallets, cards, item, onClose, onSave, onDelete }
   const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
   const validDate = Number.isInteger(parsedDay) && parsedDay >= 1 && parsedDay <= maxDay && referenceDate <= todayEnd;
   const referenceMonthLabel = referenceMonth.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
-  const changeReferenceMonth = (amount: number) => setReferenceMonth(current => new Date(current.getFullYear(), current.getMonth() + amount, 1));
+  const isCurrentReferenceMonth = referenceMonth.getFullYear() === today.getFullYear() && referenceMonth.getMonth() === today.getMonth();
+  const changeReferenceMonth = (amount: number) => {
+    const next = new Date(referenceMonth.getFullYear(), referenceMonth.getMonth() + amount, 1);
+    const nextIsFuture = next.getFullYear() > today.getFullYear() || (next.getFullYear() === today.getFullYear() && next.getMonth() > today.getMonth());
+    if (nextIsFuture) return;
+    const nextMaxDay = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+    const allowedMaxDay = next.getFullYear() === today.getFullYear() && next.getMonth() === today.getMonth()
+      ? Math.min(nextMaxDay, today.getDate())
+      : nextMaxDay;
+    setReferenceDay((currentDay) => String(Math.min(Math.max(Number(currentDay) || 1, 1), allowedMaxDay)));
+    setReferenceMonth(next);
+  };
   useEffect(() => {
     if (!visible) return;
     const itemDate = item ? new Date(item.createdAt) : today;
@@ -1804,9 +1816,9 @@ function EntryModal({ visible, wallets, cards, item, onClose, onSave, onDelete }
     <View style={styles.referenceDateRow}>
       <View style={styles.dayField}><Text style={styles.miniFieldLabel}>DIA</Text><TextInput style={styles.dayInput} value={referenceDay} onChangeText={setReferenceDay} keyboardType="number-pad" maxLength={2} /></View>
       <View style={styles.referenceMonthPicker}>
-        <Pressable style={styles.referenceArrow} onPress={() => changeReferenceMonth(-1)}><Feather name="chevron-left" size={18} color={COLORS.grape} /></Pressable>
+        <Pressable style={styles.referenceArrow} onPress={() => changeReferenceMonth(-1)} accessibilityLabel="Mês anterior"><Feather name="chevron-left" size={18} color={COLORS.grape} /></Pressable>
         <Text style={styles.referenceMonthText}>{referenceMonthLabel}</Text>
-        <Pressable style={styles.referenceArrow} onPress={() => changeReferenceMonth(1)}><Feather name="chevron-right" size={18} color={COLORS.grape} /></Pressable>
+        <Pressable style={[styles.referenceArrow, isCurrentReferenceMonth && styles.buttonDisabled]} onPress={() => changeReferenceMonth(1)} disabled={isCurrentReferenceMonth} accessibilityLabel="Próximo mês"><Feather name="chevron-right" size={18} color={COLORS.grape} /></Pressable>
       </View>
     </View>
     {!validDate && <Text style={styles.dateError}>{parsedDay > maxDay ? `Esse mês tem apenas ${maxDay} dias.` : referenceDate > todayEnd ? "Lançamentos futuros devem ser criados em Planejados." : "Informe um dia válido."}</Text>}
