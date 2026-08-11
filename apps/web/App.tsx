@@ -1501,7 +1501,13 @@ function Movements({ entries, wallets, cards, onAdd, onEdit }: { entries: Entry[
     return new Date(date.getFullYear(), date.getMonth(), 1);
   });
   const currentMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-  const isCurrentMonthSelected = selectedMonth.getTime() === currentMonth.getTime();
+  const latestEntryMonth = entries.reduce((latest, entry) => {
+    const date = new Date(entry.createdAt);
+    const entryMonth = new Date(date.getFullYear(), date.getMonth(), 1);
+    return entryMonth > latest ? entryMonth : latest;
+  }, currentMonth);
+  const isLastAvailableMonth = selectedMonth.getTime() >= latestEntryMonth.getTime();
+  const isFutureMonthSelected = selectedMonth.getTime() > currentMonth.getTime();
   const monthLabel = selectedMonth.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
   const monthEntries = entries.filter(entry => {
     const date = new Date(entry.createdAt);
@@ -1518,11 +1524,11 @@ function Movements({ entries, wallets, cards, onAdd, onEdit }: { entries: Entry[
       <PageHeader eyebrow="TUDO NUM SÓ LUGAR" title="Movimentos" button="Lançar" onPress={onAdd} />
       <View style={styles.monthPicker}>
         <Pressable style={styles.monthArrow} onPress={() => setSelectedMonth(current => new Date(current.getFullYear(), current.getMonth() - 1, 1))} accessibilityLabel="Mês anterior"><Feather name="chevron-left" size={20} color={COLORS.grape} /></Pressable>
-        <View style={styles.monthCenter}><Text style={styles.monthCaption}>MOVIMENTOS DE</Text><Text style={styles.monthLabel}>{monthLabel}</Text></View>
+        <View style={styles.monthCenter}><Text style={styles.monthCaption}>{isFutureMonthSelected ? "MOVIMENTOS PREVISTOS DE" : "MOVIMENTOS DE"}</Text><Text style={styles.monthLabel}>{monthLabel}</Text></View>
         <Pressable
-          style={[styles.monthArrow, isCurrentMonthSelected && styles.buttonDisabled]}
+          style={[styles.monthArrow, isLastAvailableMonth && styles.buttonDisabled]}
           onPress={() => setSelectedMonth(current => new Date(current.getFullYear(), current.getMonth() + 1, 1))}
-          disabled={isCurrentMonthSelected}
+          disabled={isLastAvailableMonth}
           accessibilityLabel="Próximo mês"
         ><Feather name="chevron-right" size={20} color={COLORS.grape} /></Pressable>
       </View>
@@ -1657,6 +1663,13 @@ function RecurringList({ items, wallets, onAdd, onEdit, onToggle, onPay }: { ite
 
 function WalletList({ walletBalances, pots, dreamsBalance, cards, invoices, onAdd, onEdit, onAddCard, onEditCard, onPayInvoice, onReopenInvoice, onOpenDreams }: { walletBalances: WalletBalance[]; pots: SavingsPot[]; dreamsBalance: number; cards: CreditCard[]; invoices: CardInvoice[]; onAdd: () => void; onEdit: (wallet: Wallet) => void; onAddCard: () => void; onEditCard: (card: CreditCard) => void; onPayInvoice: (invoice: CardInvoice) => void; onReopenInvoice: (invoice: CardInvoice) => void; onOpenDreams: () => void }) {
   const savingsGoals = pots.filter((pot) => pot.type !== "debt");
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(() => new Set());
+  const toggleCardInvoices = (cardId: string) => setExpandedCards((current) => {
+    const next = new Set(current);
+    if (next.has(cardId)) next.delete(cardId);
+    else next.add(cardId);
+    return next;
+  });
   return (
     <>
       <PageHeader eyebrow="CADA REAL NO SEU CANTO" title="Carteiras" button="Criar" onPress={onAdd} />
@@ -1673,6 +1686,7 @@ function WalletList({ walletBalances, pots, dreamsBalance, cards, invoices, onAd
         const cardInvoices = invoices.filter((invoice) => invoice.cardId === card.id);
         const openTotal = cardInvoices.filter((invoice) => !invoice.paid).reduce((sum, invoice) => sum + invoice.total, 0);
         const availableLimit = card.limit - openTotal;
+        const invoicesExpanded = expandedCards.has(card.id);
         return <View key={card.id} style={styles.creditCardBlock}>
           <Pressable style={[styles.creditCardFace, { backgroundColor: card.color }]} onPress={() => onEditCard(card)} accessibilityLabel={`Editar cartão ${card.name}`}>
             <View style={styles.walletTop}><MaterialCommunityIcons name="contactless-payment-circle-outline" size={24} color="#FFFFFF" /><View style={styles.walletEditBadge}><Feather name="edit-2" size={14} color="#FFFFFF" /></View></View>
@@ -1680,12 +1694,18 @@ function WalletList({ walletBalances, pots, dreamsBalance, cards, invoices, onAd
             <Text style={styles.creditCardAvailable}>{money(availableLimit)} disponíveis</Text>
             <Text style={styles.creditCardMeta}>Fecha dia {card.closingDay} · vence dia {card.dueDay} · limite {money(card.limit)}</Text>
           </Pressable>
-          {cardInvoices.length ? <View style={styles.invoiceList}>{cardInvoices.map((invoice) => <View key={invoice.key} style={styles.invoiceRow}>
+          {cardInvoices.length ? <>
+            <Pressable style={[styles.invoiceToggle, invoicesExpanded && styles.invoiceToggleExpanded]} onPress={() => toggleCardInvoices(card.id)} accessibilityRole="button" accessibilityLabel={invoicesExpanded ? `Ocultar faturas de ${card.name}` : `Ver faturas de ${card.name}`} accessibilityState={{ expanded: invoicesExpanded }}>
+              <View><Text style={styles.invoiceToggleTitle}>{invoicesExpanded ? "Ocultar faturas" : "Ver faturas"}</Text><Text style={styles.invoiceToggleMeta}>{cardInvoices.length} {cardInvoices.length === 1 ? "fatura" : "faturas"} · {money(openTotal)} em aberto</Text></View>
+              <Feather name={invoicesExpanded ? "chevron-up" : "chevron-down"} size={18} color={COLORS.grape} />
+            </Pressable>
+            {invoicesExpanded && <View style={styles.invoiceList}>{cardInvoices.map((invoice) => <View key={invoice.key} style={styles.invoiceRow}>
             <View style={styles.invoiceDateBadge}><Text style={styles.invoiceDateDay}>{new Date(invoice.dueDate).getDate()}</Text><Text style={styles.invoiceDateMonth}>{new Date(invoice.dueDate).toLocaleDateString("pt-BR", { month: "short" }).replace(".", "")}</Text></View>
             <View style={styles.flex}><Text style={styles.invoiceTitle}>Fatura de {new Date(invoice.dueDate).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}</Text><Text style={styles.invoiceMeta}>{invoice.entries.length} {invoice.entries.length === 1 ? "compra" : "compras"} · {invoice.paid ? "paga" : "em aberto"}</Text></View>
             <Text style={styles.invoiceValue}>{money(invoice.total)}</Text>
             <Pressable style={[styles.invoicePayButton, invoice.paid && styles.invoiceReopenButton]} onPress={() => invoice.paid ? onReopenInvoice(invoice) : onPayInvoice(invoice)}><Feather name={invoice.paid ? "rotate-ccw" : "check"} size={13} color={invoice.paid ? COLORS.grape : "#FFFFFF"} /><Text style={[styles.invoicePayButtonText, invoice.paid && styles.invoiceReopenButtonText]}>{invoice.paid ? "Desfazer" : "Pagar"}</Text></Pressable>
-          </View>)}</View> : <Text style={styles.emptySectionText}>Nenhuma compra lançada neste cartão.</Text>}
+          </View>)}</View>}
+          </> : <Text style={styles.emptySectionText}>Nenhuma compra lançada neste cartão.</Text>}
         </View>;
       })}
       <Pressable style={styles.dashedButton} onPress={onAddCard}><Feather name="plus" size={20} color={COLORS.grape} /><Text style={styles.dashedText}>Adicionar cartão de crédito</Text></Pressable>
@@ -3028,6 +3048,10 @@ const createStyleDefinition = () => ({
   creditCardFace: { minHeight: 162, borderRadius: 25, padding: 20, shadowColor: COLORS.ink, shadowOpacity: 0.1, shadowRadius: 12, shadowOffset: { width: 0, height: 7 }, elevation: 4 },
   creditCardAvailable: { color: "#FFFFFF", fontSize: 23, fontWeight: "900", letterSpacing: -0.7, marginTop: 3 },
   creditCardMeta: { color: "rgba(255,255,255,0.72)", fontSize: 9, fontWeight: "700", marginTop: 7 },
+  invoiceToggle: { minHeight: 58, backgroundColor: COLORS.surface, borderWidth: 1, borderTopWidth: 0, borderColor: COLORS.line, borderBottomLeftRadius: 18, borderBottomRightRadius: 18, paddingHorizontal: 14, marginHorizontal: 9, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  invoiceToggleExpanded: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 },
+  invoiceToggleTitle: { color: COLORS.ink, fontSize: 11, fontWeight: "900" },
+  invoiceToggleMeta: { color: COLORS.muted, fontSize: 9, fontWeight: "700", marginTop: 3 },
   invoiceList: { backgroundColor: COLORS.surface, borderWidth: 1, borderTopWidth: 0, borderColor: COLORS.line, borderBottomLeftRadius: 20, borderBottomRightRadius: 20, padding: 11, marginHorizontal: 9 },
   invoiceRow: { minHeight: 62, flexDirection: "row", alignItems: "center", gap: 9, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: COLORS.line },
   invoiceDateBadge: { width: 39, height: 43, borderRadius: 12, backgroundColor: COLORS.accentSurface, alignItems: "center", justifyContent: "center" },
