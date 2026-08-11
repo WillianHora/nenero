@@ -246,6 +246,12 @@ const getInvoiceDueDate = (card: CreditCard, purchaseDate: string | Date) => {
   const dueMonthOffset = card.dueDay <= card.closingDay ? 1 : 0;
   return dateAtNoon(closingMonth.getFullYear(), closingMonth.getMonth() + dueMonthOffset, card.dueDay);
 };
+const getEntryInvoiceDueDate = (entry: Entry, card: CreditCard) => {
+  // Em faturas importadas, o usuário escolhe explicitamente o mês de vencimento.
+  // Nos lançamentos manuais, a competência sempre acompanha a data da compra e o ciclo atual do cartão.
+  if (entry.importSource && entry.invoiceDueDate) return new Date(entry.invoiceDueDate);
+  return getInvoiceDueDate(card, entry.createdAt);
+};
 const getNextSalaryCycle = (settings: FinancialSettings, today = new Date()) => {
   const thisMonthSalary = dateAtNoon(today.getFullYear(), today.getMonth(), settings.salaryDay);
   const start = today < thisMonthSalary ? thisMonthSalary : dateAtNoon(today.getFullYear(), today.getMonth() + 1, settings.salaryDay);
@@ -255,11 +261,13 @@ const getNextSalaryCycle = (settings: FinancialSettings, today = new Date()) => 
 };
 const getCardInvoices = (cards: CreditCard[], entries: Entry[]): CardInvoice[] => {
   const groups = new Map<string, CardInvoice>();
-  entries.filter((entry) => entry.kind === "expense" && entry.cardId && entry.invoiceDueDate).forEach((entry) => {
+  entries.filter((entry) => entry.kind === "expense" && entry.cardId).forEach((entry) => {
     const card = cards.find((item) => item.id === entry.cardId);
     if (!card) return;
-    const key = invoiceKey(card.id, entry.invoiceDueDate!);
-    const current = groups.get(key) ?? { key, cardId: card.id, dueDate: entry.invoiceDueDate!, total: 0, entries: [], paid: card.paidInvoiceKeys.includes(key) };
+    const effectiveDueDate = getEntryInvoiceDueDate(entry, card);
+    const dueDate = effectiveDueDate.toISOString();
+    const key = invoiceKey(card.id, effectiveDueDate);
+    const current = groups.get(key) ?? { key, cardId: card.id, dueDate, total: 0, entries: [], paid: card.paidInvoiceKeys.includes(key) };
     current.total += entry.value;
     current.entries.push(entry);
     groups.set(key, current);
@@ -1673,8 +1681,9 @@ function PageHeader({ eyebrow, title, button, onPress, hideButton = false }: { e
 
 function EntryRow({ entry, wallet, card, last, onEdit }: { entry: Entry; wallet?: Wallet; card?: CreditCard; last: boolean; onEdit?: () => void }) {
   const visual = getCategoryVisual(entry.category, entry.kind);
-  const invoiceLabel = card && entry.invoiceDueDate
-    ? `${card.name} · fatura ${new Date(entry.invoiceDueDate).toLocaleDateString("pt-BR", { month: "short" })}`
+  const effectiveInvoiceDueDate = card ? getEntryInvoiceDueDate(entry, card) : undefined;
+  const invoiceLabel = card && effectiveInvoiceDueDate
+    ? `${card.name} · fatura ${effectiveInvoiceDueDate.toLocaleDateString("pt-BR", { month: "short" })}`
     : undefined;
   return (
     <View style={[styles.entryRow, !last && styles.entryBorder]}>
