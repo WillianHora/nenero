@@ -19,6 +19,7 @@ import {
   Text,
   TextInput,
   useColorScheme,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
@@ -346,6 +347,8 @@ const initialEntries: Entry[] = [];
 const initialRecurring: Recurring[] = [];
 
 function AppContent() {
+  const { width: viewportWidth } = useWindowDimensions();
+  const isDesktop = Platform.OS === "web" && viewportWidth >= 980;
   const systemColorScheme = useColorScheme();
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
   const isDark = themeMode === "dark" || (themeMode === "system" && systemColorScheme === "dark");
@@ -1034,18 +1037,20 @@ Antes de responder, confira silenciosamente:
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar style={isDark ? "light" : "dark"} />
-      <View style={styles.app}>
-        <View style={styles.topbar}>
+      <View style={[styles.app, isDesktop && styles.desktopApp]}>
+        {isDesktop && <DesktopSidebar tab={tab} setTab={setTab} userName={userName} userInitials={userInitials} onProfile={() => setModal("profile")} onAdd={() => { setEditingEntry(null); setModal("entry"); }} />}
+        <View style={styles.mainColumn}>
+        <View style={[styles.topbar, isDesktop && styles.desktopTopbar]}>
           <View style={styles.brandRow}>
-            <View style={styles.brandMark}><Text style={styles.brandFace}>◡</Text></View>
-            <Text style={styles.brand}>nenero</Text>
+            {!isDesktop && <><View style={styles.brandMark}><Text style={styles.brandFace}>◡</Text></View><Text style={styles.brand}>nenero</Text></>}
+            {isDesktop && <View><Text style={styles.desktopTopbarEyebrow}>VISÃO GERAL</Text><Text style={styles.desktopTopbarTitle}>{NAV_ITEMS.find((item) => item.key === tab)?.label}</Text></View>}
           </View>
-          <Pressable style={styles.avatar} onPress={() => setModal("profile")} accessibilityLabel="Abrir perfil"><Text style={styles.avatarText}>{userInitials}</Text></Pressable>
+          <Pressable style={[styles.avatar, isDesktop && styles.desktopAvatar]} onPress={() => setModal("profile")} accessibilityLabel="Abrir perfil"><Text style={styles.avatarText}>{userInitials}</Text></Pressable>
         </View>
 
         {cloudError ? <View style={styles.cloudError}><Feather name="cloud-off" size={14} color={COLORS.danger} /><Text style={styles.cloudErrorText}>{cloudError}</Text></View> : null}
 
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={[styles.content, isDesktop && styles.desktopContent]} showsVerticalScrollIndicator={false}>
           {tab === "inicio" && (
             <Home
               userName={userName}
@@ -1070,6 +1075,7 @@ Antes de responder, confira silenciosamente:
               onAdd={() => { setEditingEntry(null); setModal("entry"); }}
               onEditEntry={(entry) => { setEditingEntry(entry); setModal("entry"); }}
               onConfigureCycle={() => setModal("financialSettings")}
+              isDesktop={isDesktop}
             />
           )}
           {tab === "movimentos" && <Movements entries={sortedEntries} wallets={wallets} cards={creditCards} onAdd={() => { setEditingEntry(null); setModal("entry"); }} onEdit={(entry) => { setEditingEntry(entry); setModal("entry"); }} />}
@@ -1131,7 +1137,8 @@ Antes de responder, confira silenciosamente:
           {tab === "ferramentas" && <Tools onLifeCalculator={() => setModal("lifeCalculator")} />}
         </ScrollView>
 
-        <BottomNav tab={tab} setTab={setTab} />
+        {!isDesktop && <BottomNav tab={tab} setTab={setTab} />}
+        </View>
       </View>
 
       <EntryModal
@@ -1359,12 +1366,13 @@ Antes de responder, confira silenciosamente:
   );
 }
 
-function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, monthlyExpenses, financialSettings, salaryCycle, cycleInvoices, cycleCashBills, cyclePlannedCardBills, freeToSpend, creditCards, entries, wallets, analysis, analyzing, hasGoal, onAnalyze, onAdd, onEditEntry, onConfigureCycle }: {
+function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, monthlyExpenses, financialSettings, salaryCycle, cycleInvoices, cycleCashBills, cyclePlannedCardBills, freeToSpend, creditCards, entries, wallets, analysis, analyzing, hasGoal, onAnalyze, onAdd, onEditEntry, onConfigureCycle, isDesktop }: {
   userName: string;
   balance: number; savedAmount: number; recurringTotal: number; monthlyIncome: number; monthlyExpenses: number; entries: Entry[]; wallets: Wallet[];
   financialSettings: FinancialSettings; salaryCycle: { start: Date; end: Date }; cycleInvoices: CardInvoice[]; cycleCashBills: number; cyclePlannedCardBills: number; freeToSpend: number; creditCards: CreditCard[];
   analysis: AiAnalysis | null; analyzing: boolean; hasGoal: boolean; onAnalyze: () => void;
   onAdd: () => void; onEditEntry: (entry: Entry) => void; onConfigureCycle: () => void;
+  isDesktop: boolean;
 }) {
   const today = new Date().toLocaleDateString("pt-BR", {
     weekday: "long",
@@ -1452,7 +1460,10 @@ function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, m
         <View style={styles.flex}><Text style={styles.eyebrow}>{today}</Text><Text style={styles.h1} numberOfLines={2}>Oi, {userName}!</Text></View>
       </View>
 
-      <View style={styles.heroDeck} accessibilityLabel="Resumo financeiro em dois cartões">
+      {isDesktop ? <View style={styles.desktopHeroGrid} accessibilityLabel="Resumo financeiro">
+        <View style={styles.desktopHeroItem}>{balanceHeroCard}</View>
+        <View style={styles.desktopHeroItem}>{cycleHeroCard}</View>
+      </View> : <><View style={styles.heroDeck} accessibilityLabel="Resumo financeiro em dois cartões">
         <Animated.View pointerEvents="none" style={[styles.heroDeckCard, styles.heroDeckBack, { opacity: revealProgress.interpolate({ inputRange: [0, 1], outputRange: [0.86, 1] }), transform: [{ translateY: revealProgress.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }, { scale: revealProgress.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) }, { rotate: "1.2deg" }] }]}>
           {activeHeroCard === 0 ? cycleHeroCard : balanceHeroCard}
         </Animated.View>
@@ -1464,8 +1475,10 @@ function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, m
         <View style={styles.heroDeckDots}>{([0, 1] as const).map((index) => <Pressable key={index} accessibilityRole="button" accessibilityLabel={index === 0 ? "Mostrar saldo" : "Mostrar próximo ciclo do salário"} accessibilityState={{ selected: activeHeroCard === index }} style={[styles.heroDeckDotButton, activeHeroCard === index && styles.heroDeckDotButtonActive]} onPress={() => changeHeroCard(index > activeHeroCard ? -1 : 1, index)} />)}</View>
         <View style={styles.heroDeckHint}><Feather name="move" size={12} color={COLORS.muted} /><Text style={styles.heroDeckHintText}>{activeHeroCard === 0 ? "Deslize para ver as faturas" : "Deslize para voltar ao saldo"}</Text></View>
       </View>
+      </>}
 
-      <View style={styles.metricsRow}>
+      <View style={isDesktop ? styles.desktopStatsGrid : undefined}>
+      <View style={[styles.metricsRow, isDesktop && styles.desktopMetricsRow]}>
         <View style={[styles.metricCard, styles.metricIncomeCard]}>
           <View style={[styles.iconBubble, { backgroundColor: "#799B22" }]}><Feather name="arrow-down-left" size={17} color="white" /></View>
           <Text style={[styles.metricLabel, styles.metricIncomeLabel]}>Entrou este mês</Text>
@@ -1482,16 +1495,23 @@ function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, m
         <View style={styles.flex}><Text style={styles.metricLabel}>Já comprometido em gastos fixos</Text><Text style={styles.commitmentHint}>Contas ativas deste mês</Text></View>
         <Text style={styles.metricValue}>{money(recurringTotal)}</Text>
       </View>
-      <AiInsightCard analysis={analysis} analyzing={analyzing} hasGoal={hasGoal} onPress={onAnalyze} />
-
-      <SectionTitle title="Últimos rolês do dinheiro" action="Ver todos" />
-      <View style={styles.listCard}>
-        {entries.slice(0, 4).map((entry, index) => <EntryRow key={entry.id} entry={entry} wallet={wallets.find(wallet => wallet.id === entry.walletId)} card={creditCards.find(card => card.id === entry.cardId)} last={index === Math.min(entries.length, 4) - 1} onEdit={entry.invoicePaymentKey ? undefined : () => onEditEntry(entry)} />)}
       </View>
+      <View style={isDesktop ? styles.desktopLowerGrid : undefined}>
+      <View style={isDesktop ? styles.desktopInsightColumn : undefined}>
+      <AiInsightCard analysis={analysis} analyzing={analyzing} hasGoal={hasGoal} onPress={onAnalyze} />
 
       <View style={styles.tipCard}>
         <View style={styles.tipMascot}><Text style={styles.tipFace}>•ᴗ•</Text></View>
         <View style={styles.tipCopy}><Text style={styles.tipTitle}>Papo do Nenero</Text><Text style={styles.tipText}>Seus gastos fixos ocupam {Math.min(100, Math.round((recurringTotal / Math.max(balance, 1)) * 100))}% do saldo. O resto pode respirar.</Text></View>
+      </View>
+      </View>
+
+      <View style={isDesktop ? styles.desktopActivityColumn : undefined}>
+      <SectionTitle title="Últimos rolês do dinheiro" action="Ver todos" />
+      <View style={styles.listCard}>
+        {entries.slice(0, 4).map((entry, index) => <EntryRow key={entry.id} entry={entry} wallet={wallets.find(wallet => wallet.id === entry.walletId)} card={creditCards.find(card => card.id === entry.cardId)} last={index === Math.min(entries.length, 4) - 1} onEdit={entry.invoicePaymentKey ? undefined : () => onEditEntry(entry)} />)}
+      </View>
+      </View>
       </View>
     </>
   );
@@ -1836,17 +1856,38 @@ function SectionTitle({ title, action }: { title: string; action?: string }) {
   return <View style={styles.sectionTitle}><Text style={styles.sectionTitleText}>{title}</Text>{action && <Text style={styles.sectionAction}>{action}</Text>}</View>;
 }
 
+const NAV_ITEMS: { key: Tab; label: string; icon: keyof typeof Feather.glyphMap }[] = [
+  { key: "inicio", label: "Início", icon: "home" },
+  { key: "movimentos", label: "Movimentos", icon: "list" },
+  { key: "recorrentes", label: "Planejados", icon: "repeat" },
+  { key: "cofrinhos", label: "Metas", icon: "target" },
+  { key: "carteiras", label: "Carteiras", icon: "credit-card" },
+  { key: "ferramentas", label: "Ferramentas", icon: "tool" },
+];
+
+function DesktopSidebar({ tab, setTab, userName, userInitials, onProfile, onAdd }: { tab: Tab; setTab: (tab: Tab) => void; userName: string; userInitials: string; onProfile: () => void; onAdd: () => void }) {
+  return <View style={styles.desktopSidebar}>
+    <View style={styles.desktopBrandRow}><View style={styles.desktopBrandMark}><Text style={styles.desktopBrandFace}>◡</Text></View><View><Text style={styles.desktopBrand}>nenero</Text><Text style={styles.desktopBrandCaption}>SEU DINHEIRO, SEM DRAMA</Text></View></View>
+    <Pressable style={styles.desktopAddButton} onPress={onAdd} accessibilityLabel="Criar novo lançamento"><Feather name="plus" size={18} color="#30204F" /><Text style={styles.desktopAddButtonText}>Novo lançamento</Text></Pressable>
+    <View style={styles.desktopNav} accessibilityLabel="Navegação principal">
+      <Text style={styles.desktopNavCaption}>NAVEGAR</Text>
+      {NAV_ITEMS.map((item) => {
+        const active = tab === item.key;
+        return <Pressable key={item.key} style={[styles.desktopNavItem, active && styles.desktopNavItemActive]} onPress={() => setTab(item.key)} accessibilityRole="button" accessibilityState={{ selected: active }}><View style={[styles.desktopNavIcon, active && styles.desktopNavIconActive]}><Feather name={item.icon} size={17} color={active ? "#30204F" : "#BDB3D2"} /></View><Text style={[styles.desktopNavLabel, active && styles.desktopNavLabelActive]}>{item.label}</Text>{active && <View style={styles.desktopNavRail} />}</Pressable>;
+      })}
+    </View>
+    <Pressable style={styles.desktopProfile} onPress={onProfile} accessibilityLabel="Abrir perfil"><View style={styles.desktopProfileAvatar}><Text style={styles.avatarText}>{userInitials}</Text></View><View style={styles.flex}><Text style={styles.desktopProfileName} numberOfLines={1}>{userName}</Text><Text style={styles.desktopProfileAction}>Configurações e perfil</Text></View><Feather name="chevron-right" size={16} color="#8F84A4" /></Pressable>
+  </View>;
+}
+
 function BottomNav({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
-  const tabs: { key: Tab; label: string; icon: keyof typeof Feather.glyphMap }[] = [
-    { key: "inicio", label: "Início", icon: "home" }, { key: "movimentos", label: "Movimentos", icon: "list" },
-    { key: "recorrentes", label: "Planejados", icon: "repeat" }, { key: "cofrinhos", label: "Metas", icon: "target" },
-    { key: "carteiras", label: "Carteiras", icon: "credit-card" }, { key: "ferramentas", label: "Ferramentas", icon: "tool" },
-  ];
-  return <View style={styles.nav}>{tabs.map((item) => <Pressable key={item.key} style={styles.navItem} onPress={() => setTab(item.key)}><Feather name={item.icon} size={21} color={tab === item.key ? COLORS.grape : COLORS.muted} /><Text style={[styles.navLabel, tab === item.key && styles.navActive]}>{item.label}</Text>{tab === item.key && <View style={styles.navDot} />}</Pressable>)}</View>;
+  return <View style={styles.nav}>{NAV_ITEMS.map((item) => <Pressable key={item.key} style={styles.navItem} onPress={() => setTab(item.key)}><Feather name={item.icon} size={21} color={tab === item.key ? COLORS.grape : COLORS.muted} /><Text style={[styles.navLabel, tab === item.key && styles.navActive]}>{item.label}</Text>{tab === item.key && <View style={styles.navDot} />}</Pressable>)}</View>;
 }
 
 function Sheet({ visible, title, subtitle, onClose, children }: { visible: boolean; title: string; subtitle: string; onClose: () => void; children: React.ReactNode }) {
-  return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}><KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={0} style={styles.modalWrap}><Pressable style={styles.backdrop} onPress={onClose} /><View style={styles.sheet}><View style={styles.handle} /><View style={styles.sheetHeader}><View style={styles.flex}><Text style={styles.sheetTitle}>{title}</Text><Text style={styles.sheetSubtitle}>{subtitle}</Text></View><Pressable style={styles.close} onPress={onClose}><Feather name="x" size={19} color={COLORS.ink} /></Pressable></View><ScrollView contentContainerStyle={styles.sheetContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets={Platform.OS === "ios"} showsVerticalScrollIndicator={false}>{children}</ScrollView></View></KeyboardAvoidingView></Modal>;
+  const { width } = useWindowDimensions();
+  const isDesktop = Platform.OS === "web" && width >= 980;
+  return <Modal visible={visible} transparent animationType={isDesktop ? "fade" : "slide"} onRequestClose={onClose}><KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={0} style={[styles.modalWrap, isDesktop && styles.desktopModalWrap]}><Pressable style={styles.backdrop} onPress={onClose} /><View style={[styles.sheet, isDesktop && styles.desktopSheet]}>{!isDesktop && <View style={styles.handle} />}<View style={styles.sheetHeader}><View style={styles.flex}><Text style={styles.sheetTitle}>{title}</Text><Text style={styles.sheetSubtitle}>{subtitle}</Text></View><Pressable style={styles.close} onPress={onClose}><Feather name="x" size={19} color={COLORS.ink} /></Pressable></View><ScrollView contentContainerStyle={[styles.sheetContent, isDesktop && styles.desktopSheetContent]} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets={Platform.OS === "ios"} showsVerticalScrollIndicator={false}>{children}</ScrollView></View></KeyboardAvoidingView></Modal>;
 }
 
 function Field({ label, value, onChange, placeholder, keyboardType, secureTextEntry, money: isMoney }: {
@@ -2873,7 +2914,34 @@ const createStyleDefinition = () => ({
   setupCode: { backgroundColor: COLORS.mark, borderRadius: 16, padding: 16, gap: 8 },
   setupCodeText: { color: COLORS.lime, fontSize: 11, fontWeight: "800" },
   app: { flex: 1, backgroundColor: COLORS.paper, maxWidth: 620, width: "100%", alignSelf: "center" },
+  desktopApp: { maxWidth: "100%", flexDirection: "row", alignSelf: "stretch" },
+  mainColumn: { flex: 1, minWidth: 0, backgroundColor: COLORS.paper },
+  desktopSidebar: { width: 252, backgroundColor: "#211832", paddingHorizontal: 18, paddingTop: 24, paddingBottom: 18, borderRightWidth: 1, borderRightColor: "rgba(255,255,255,0.07)" },
+  desktopBrandRow: { flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 7, marginBottom: 28 },
+  desktopBrandMark: { width: 38, height: 38, borderRadius: 13, backgroundColor: COLORS.lime, alignItems: "center", justifyContent: "center", transform: [{ rotate: "-5deg" }] },
+  desktopBrandFace: { color: "#30204F", fontSize: 27, fontWeight: "900", marginTop: -6 },
+  desktopBrand: { color: "#FFFFFF", fontSize: 22, fontWeight: "900", letterSpacing: -1.1 },
+  desktopBrandCaption: { color: "#8F84A4", fontSize: 6, fontWeight: "900", letterSpacing: 1.1, marginTop: 1 },
+  desktopAddButton: { minHeight: 48, borderRadius: 15, backgroundColor: COLORS.lime, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 29 },
+  desktopAddButtonText: { color: "#30204F", fontSize: 12, fontWeight: "900" },
+  desktopNav: { flex: 1, gap: 5 },
+  desktopNavCaption: { color: "#766A8B", fontSize: 8, fontWeight: "900", letterSpacing: 1.3, paddingHorizontal: 11, marginBottom: 5 },
+  desktopNavItem: { minHeight: 49, borderRadius: 14, flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 10, position: "relative", overflow: "hidden" },
+  desktopNavItemActive: { backgroundColor: "rgba(255,255,255,0.09)" },
+  desktopNavIcon: { width: 31, height: 31, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  desktopNavIconActive: { backgroundColor: COLORS.lime },
+  desktopNavLabel: { color: "#BDB3D2", fontSize: 12, fontWeight: "700" },
+  desktopNavLabelActive: { color: "#FFFFFF", fontWeight: "900" },
+  desktopNavRail: { position: "absolute", right: 0, width: 3, height: 22, borderRadius: 2, backgroundColor: COLORS.lime },
+  desktopProfile: { minHeight: 65, borderRadius: 17, backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: "rgba(255,255,255,0.07)", flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 10 },
+  desktopProfileAvatar: { width: 38, height: 38, borderRadius: 13, backgroundColor: COLORS.lime, alignItems: "center", justifyContent: "center" },
+  desktopProfileName: { color: "#FFFFFF", fontSize: 11, fontWeight: "900" },
+  desktopProfileAction: { color: "#8F84A4", fontSize: 8, marginTop: 3 },
   topbar: { height: 64, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20 },
+  desktopTopbar: { height: 78, paddingHorizontal: 36, borderBottomWidth: 1, borderBottomColor: COLORS.line, backgroundColor: COLORS.surface },
+  desktopTopbarEyebrow: { color: COLORS.muted, fontSize: 7, fontWeight: "900", letterSpacing: 1.2 },
+  desktopTopbarTitle: { color: COLORS.ink, fontSize: 17, fontWeight: "900", marginTop: 2 },
+  desktopAvatar: { width: 40, height: 40, borderRadius: 14 },
   cloudError: { marginHorizontal: 20, marginBottom: 8, borderRadius: 13, backgroundColor: COLORS.dangerSurface, padding: 10, flexDirection: "row", alignItems: "center", gap: 8 },
   cloudErrorText: { flex: 1, color: COLORS.danger, fontSize: 10, lineHeight: 14, fontWeight: "700" },
   brandRow: { flexDirection: "row", alignItems: "center", gap: 9 },
@@ -2883,6 +2951,7 @@ const createStyleDefinition = () => ({
   avatar: { width: 35, height: 35, borderRadius: 14, backgroundColor: COLORS.lime, alignItems: "center", justifyContent: "center" },
   avatarText: { color: COLORS.ink, fontWeight: "900", fontSize: 12 },
   content: { padding: 20, paddingTop: 12, paddingBottom: 120 },
+  desktopContent: { width: "100%", maxWidth: 1180, alignSelf: "center", paddingHorizontal: 36, paddingTop: 28, paddingBottom: 48 },
   helloRow: { marginBottom: 20 },
   eyebrow: { color: COLORS.muted, fontSize: 10, fontWeight: "800", letterSpacing: 1.4, marginBottom: 5 },
   h1: { color: COLORS.ink, fontSize: 30, lineHeight: 35, fontWeight: "900", letterSpacing: -1.2 },
@@ -2895,6 +2964,13 @@ const createStyleDefinition = () => ({
   moodDanger: { backgroundColor: COLORS.dangerSurface },
   moodDangerText: { color: COLORS.danger },
   heroDeck: { height: 270, position: "relative", marginHorizontal: 2 },
+  desktopHeroGrid: { flexDirection: "row", gap: 18, marginBottom: 22 },
+  desktopHeroItem: { flex: 1, minWidth: 0 },
+  desktopStatsGrid: { flexDirection: "row", gap: 14, alignItems: "stretch" },
+  desktopMetricsRow: { flex: 2, marginBottom: 0 },
+  desktopLowerGrid: { flexDirection: "row", gap: 18, alignItems: "flex-start", marginTop: 4 },
+  desktopInsightColumn: { width: "37%", minWidth: 0 },
+  desktopActivityColumn: { flex: 1, minWidth: 0 },
   heroDeckCard: { position: "absolute", top: 0, left: 0, right: 0 },
   heroDeckBack: { zIndex: 1 },
   heroDeckFront: { zIndex: 2 },
@@ -3157,8 +3233,11 @@ const createStyleDefinition = () => ({
   emptyPotButton: { backgroundColor: COLORS.grape, borderRadius: 13, paddingHorizontal: 16, paddingVertical: 11, marginTop: 16 },
   emptyPotButtonText: { color: "#FFFFFF", fontSize: 11, fontWeight: "900" },
   modalWrap: { flex: 1, justifyContent: "flex-end" },
+  desktopModalWrap: { justifyContent: "center", alignItems: "center", padding: 28 },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(28,22,43,0.45)" },
   sheet: { maxHeight: "91%", backgroundColor: COLORS.paper, borderTopLeftRadius: 30, borderTopRightRadius: 30, paddingHorizontal: 20, paddingBottom: 28 },
+  desktopSheet: { width: "100%", maxWidth: 620, maxHeight: "88%", borderRadius: 28, paddingHorizontal: 28, paddingBottom: 28, shadowColor: "#160D28", shadowOpacity: 0.25, shadowRadius: 40, shadowOffset: { width: 0, height: 18 } },
+  desktopSheetContent: { paddingBottom: 8 },
   sheetContent: { paddingBottom: 24 },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.lineStrong, alignSelf: "center", marginTop: 10, marginBottom: 18 },
   sheetHeader: { flexDirection: "row", gap: 14, alignItems: "flex-start", marginBottom: 20 },

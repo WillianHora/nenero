@@ -6,10 +6,7 @@
     "apps/*"
   ],
   "scripts": {
-    "start": "npm run start:mobile",
-    "start:mobile": "npm --workspace @nenero/mobile run start",
-    "android": "npm --workspace @nenero/mobile run android",
-    "ios": "npm --workspace @nenero/mobile run ios",
+    "start": "npm run start:web",
     "start:web": "npm --workspace @nenero/web run start",
     "web": "npm run start:web",
     "export:web": "npm --workspace @nenero/web run export",

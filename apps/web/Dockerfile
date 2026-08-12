@@ -8,7 +8,6 @@ ENV EXPO_PUBLIC_SUPABASE_URL=${EXPO_PUBLIC_SUPABASE_URL}
 ENV EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=${EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY}
 
 COPY package.json package-lock.json ./
-COPY apps/mobile/package.json ./apps/mobile/package.json
 COPY apps/web/package.json ./apps/web/package.json
 RUN npm ci
 

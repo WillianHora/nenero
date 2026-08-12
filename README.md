@@ -1,15 +1,14 @@
 # Nenero
 
-O repositório é um monorepo com aplicações web e mobile independentes.
+Aplicação web de finanças pessoais construída com Expo Web, Supabase e suporte a PWA.
 
 ## Estrutura
 
 ```text
 apps/
-  mobile/             Expo local para Android e iOS
   web/                Expo Web com Supabase, PWA, servidor e Docker
 supabase/
-  migrations/         Banco usado pela versão web
+  migrations/         Banco da aplicação
 ```
 
 ## Instalação
@@ -20,27 +19,10 @@ Na raiz:
 npm install
 ```
 
-Copie as variáveis conforme o projeto que será executado:
+Copie as variáveis de ambiente:
 
 ```bash
-cp apps/mobile/.env.example apps/mobile/.env
 cp apps/web/.env.example apps/web/.env
-```
-
-## Mobile
-
-```bash
-npm run start:mobile
-npm run android
-npm run ios
-```
-
-Os builds EAS devem ser executados dentro do projeto mobile:
-
-```bash
-cd apps/mobile
-npx eas build --platform android --profile preview
-npx eas build --platform ios --profile production
 ```
 
 ## Web
@@ -65,8 +47,7 @@ cd apps/web
 docker compose up -d --build
 ```
 
-O proxy HTTPS e o certificado temporário também pertencem exclusivamente ao
-projeto web em `apps/web/Caddyfile`.
+O proxy HTTPS e o certificado temporário ficam em `apps/web/Caddyfile`.
 
 ## Validação
 
