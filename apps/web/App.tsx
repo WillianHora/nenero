@@ -90,6 +90,7 @@ type Recurring = {
   active: boolean;
   kind?: EntryKind;
   walletId?: string;
+  cardId?: string;
   lastPostedMonth?: string;
   startDate?: string;
   postedMonths?: string[];
@@ -269,24 +270,21 @@ const getEntryInvoiceDueDate = (entry: Entry, card: CreditCard) => {
   // Toda compra, manual ou importada, segue a data de referência e o ciclo atual do cartão.
   return getInvoiceDueDate(card, entry.createdAt);
 };
-const expandManualInstallments = (entry: Omit<Entry, "id">, card: CreditCard, total: number): Omit<Entry, "id">[] => {
-  if (total <= 1) return [entry];
+const expandManualInstallments = (entry: Omit<Entry, "id">, card: CreditCard, currentNumber: number, remaining: number): Omit<Entry, "id">[] => {
+  const total = currentNumber + remaining - 1;
   const baseTitle = parseInstallment(entry.title)?.baseTitle ?? entry.title;
   const key = installmentIdentity(card.id, baseTitle, total);
-  const totalCents = Math.round(entry.value * 100);
-  const baseCents = Math.floor(totalCents / total);
-  const remainder = totalCents - baseCents * total;
   const purchaseDate = new Date(entry.createdAt);
-  return Array.from({ length: total }, (_, index) => {
+  return Array.from({ length: remaining }, (_, index) => {
     const installmentDate = addMonthsClamped(purchaseDate, index);
+    const installmentNumber = currentNumber + index;
     return {
       ...entry,
-      title: `${baseTitle} · Parcela ${index + 1}/${total}`,
-      value: (baseCents + (index < remainder ? 1 : 0)) / 100,
+      title: `${baseTitle} · Parcela ${installmentNumber}/${total}`,
       createdAt: installmentDate.toISOString(),
       invoiceDueDate: getInvoiceDueDate(card, installmentDate).toISOString(),
       installmentKey: key,
-      installmentNumber: index + 1,
+      installmentNumber,
       installmentTotal: total,
       projectedInstallment: index > 0,
     };
@@ -534,10 +532,13 @@ function AppContent() {
   useEffect(() => {
     if (!ready) return;
     const today = new Date();
+    const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
     const postings: { recurringId: string; monthKey: string; entry: Entry }[] = [];
 
     recurring.forEach(item => {
-      if (!item.active || item.kind !== "income" || !item.walletId) return;
+      const card = item.cardId ? creditCards.find((value) => value.id === item.cardId) : undefined;
+      const automaticallyPosted = item.kind === "income" || Boolean(card);
+      if (!item.active || !automaticallyPosted || !item.walletId) return;
       const start = item.startDate ? new Date(item.startDate) : today;
       const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
       const posted = new Set(item.postedMonths ?? (item.lastPostedMonth ? [item.lastPostedMonth] : []));
@@ -548,7 +549,7 @@ function AppContent() {
         const monthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
         const lastDay = new Date(year, month + 1, 0).getDate();
         const scheduledDate = new Date(year, month, Math.min(item.day, lastDay), 12);
-        if (scheduledDate <= today && !posted.has(monthKey)) {
+        if (scheduledDate <= todayEnd && !posted.has(monthKey)) {
           postings.push({
             recurringId: item.id,
             monthKey,
@@ -556,10 +557,12 @@ function AppContent() {
               id: `${item.id}-${monthKey}`,
               title: item.title,
               value: item.value,
-              kind: "income",
+              kind: item.kind ?? "expense",
               category: item.category,
               walletId: item.walletId,
               createdAt: scheduledDate.toISOString(),
+              cardId: card?.id,
+              invoiceDueDate: card ? getInvoiceDueDate(card, scheduledDate).toISOString() : undefined,
             },
           });
         }
@@ -577,7 +580,7 @@ function AppContent() {
       if (!newMonths.length) return item;
       return { ...item, postedMonths: [...new Set([...(item.postedMonths ?? []), ...newMonths])] };
     }));
-  }, [ready, recurring]);
+  }, [ready, recurring, creditCards]);
 
   const walletBalances = useMemo(() => wallets.map((wallet) => ({ wallet, balance: getWalletAvailableBalance(wallet, entries, savingsPots) })), [wallets, entries, savingsPots]);
   const availableBalance = useMemo(() => walletBalances.reduce((sum, item) => sum + item.balance, 0), [walletBalances]);
@@ -610,7 +613,7 @@ function AppContent() {
     return !invoice.paid && dueDate >= salaryCycle.start && dueDate <= salaryCycle.end;
   });
   const cycleInvoiceTotal = cycleInvoices.reduce((sum, invoice) => sum + invoice.total, 0);
-  const cycleCashBills = recurring.filter((item) => item.active && item.kind !== "income").reduce((sum, item) => {
+  const cycleCashBills = recurring.filter((item) => item.active && item.kind !== "income" && !item.cardId).reduce((sum, item) => {
     const cursor = new Date(salaryCycle.start.getFullYear(), salaryCycle.start.getMonth(), 1);
     const finalMonth = new Date(salaryCycle.end.getFullYear(), salaryCycle.end.getMonth(), 1);
     let occurrences = 0;
@@ -622,7 +625,24 @@ function AppContent() {
     }
     return sum + item.value * occurrences;
   }, 0);
-  const freeToSpend = projectionSettings.projectedMonthlyIncome - cycleInvoiceTotal - cycleCashBills;
+  const cyclePlannedCardBills = recurring.filter((item) => item.active && item.kind !== "income" && item.cardId).reduce((sum, item) => {
+    const card = creditCards.find((value) => value.id === item.cardId);
+    if (!card) return sum;
+    const cursor = new Date(salaryCycle.start.getFullYear(), salaryCycle.start.getMonth() - 2, 1);
+    const finalMonth = new Date(salaryCycle.end.getFullYear(), salaryCycle.end.getMonth(), 1);
+    const startDate = item.startDate ? new Date(item.startDate) : undefined;
+    let occurrences = 0;
+    while (cursor <= finalMonth) {
+      const scheduledDate = dateAtNoon(cursor.getFullYear(), cursor.getMonth(), item.day);
+      const key = monthKey(scheduledDate);
+      const dueDate = getInvoiceDueDate(card, scheduledDate);
+      const started = !startDate || scheduledDate >= new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+      if (started && dueDate >= salaryCycle.start && dueDate <= salaryCycle.end && !(item.postedMonths ?? []).includes(key)) occurrences += 1;
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+    return sum + item.value * occurrences;
+  }, 0);
+  const freeToSpend = projectionSettings.projectedMonthlyIncome - cycleInvoiceTotal - cycleCashBills - cyclePlannedCardBills;
 
   const runAnalysis = async (openDetails = false) => {
     if (!goal.trim()) { setModal("profile"); return; }
@@ -895,8 +915,11 @@ Antes de responder, confira silenciosamente:
 
   const addEntry = (entry: Omit<Entry, "id">) => {
     const card = entry.cardId ? creditCards.find((item) => item.id === entry.cardId) : undefined;
+    const remainingInstallments = entry.installmentNumber && entry.installmentTotal
+      ? entry.installmentTotal - entry.installmentNumber + 1
+      : 1;
     const expanded = card && (entry.installmentTotal ?? 1) > 1
-      ? expandManualInstallments(entry, card, entry.installmentTotal!)
+      ? expandManualInstallments(entry, card, entry.installmentNumber!, remainingInstallments)
       : [entry];
     setEntries((current) => [...expanded.map((item) => ({ ...item, id: uid() })), ...current]);
     setModal(null);
@@ -1035,6 +1058,7 @@ Antes de responder, confira silenciosamente:
               salaryCycle={salaryCycle}
               cycleInvoices={cycleInvoices}
               cycleCashBills={cycleCashBills}
+              cyclePlannedCardBills={cyclePlannedCardBills}
               freeToSpend={freeToSpend}
               creditCards={creditCards}
               entries={sortedEntries}
@@ -1053,27 +1077,35 @@ Antes de responder, confira silenciosamente:
             <RecurringList
               items={recurring}
               wallets={wallets}
+              cards={creditCards}
               onAdd={() => { setEditingRecurring(null); setModal("recurring"); }}
               onEdit={(item) => { setEditingRecurring(item); setModal("recurring"); }}
               onToggle={(id) => setRecurring((items) => items.map((item) => item.id === id ? { ...item, active: !item.active } : item))}
               onPay={(item, monthKey) => {
-                const walletId = item.walletId ?? wallets[0]?.id;
-                if (!walletId || item.paidMonths?.includes(monthKey)) return;
+                const card = item.cardId ? creditCards.find((value) => value.id === item.cardId) : undefined;
+                const alreadyPosted = card ? item.postedMonths?.includes(monthKey) : item.paidMonths?.includes(monthKey);
+                const walletId = card?.paymentWalletId ?? item.walletId ?? wallets[0]?.id;
+                if (!walletId || alreadyPosted) return;
                 const [yearText, monthText] = monthKey.split("-");
                 const year = Number(yearText);
                 const month = Number(monthText);
                 const lastDay = new Date(year, month, 0).getDate();
                 const paymentDate = new Date(year, month - 1, Math.min(item.day, lastDay), 12);
                 setEntries(current => [{
-                  id: `${item.id}-payment-${monthKey}`,
+                  id: `${item.id}-${monthKey}`,
                   title: item.title,
                   value: item.value,
                   kind: "expense",
                   category: item.category,
                   walletId,
                   createdAt: paymentDate.toISOString(),
+                  cardId: card?.id,
+                  invoiceDueDate: card ? getInvoiceDueDate(card, paymentDate).toISOString() : undefined,
                 }, ...current]);
-                setRecurring(current => current.map(value => value.id === item.id ? { ...value, paidMonths: [...(value.paidMonths ?? []), monthKey] } : value));
+                setRecurring(current => current.map(value => value.id === item.id ? card
+                  ? { ...value, postedMonths: [...new Set([...(value.postedMonths ?? []), monthKey])] }
+                  : { ...value, paidMonths: [...new Set([...(value.paidMonths ?? []), monthKey])] }
+                  : value));
               }}
             />
           )}
@@ -1167,8 +1199,10 @@ Antes de responder, confira silenciosamente:
         }}
         onDelete={editingCard ? () => {
           const linked = entries.filter((entry) => entry.cardId === editingCard.id).length;
-          if (linked) {
-            globalThis.alert(`Este cartão tem ${linked} compra${linked === 1 ? "" : "s"} vinculada${linked === 1 ? "" : "s"}. Exclua ou mova essas compras antes.`);
+          const linkedRecurring = recurring.filter((item) => item.cardId === editingCard.id).length;
+          if (linked || linkedRecurring) {
+            const links = [linked ? `${linked} compra${linked === 1 ? "" : "s"}` : "", linkedRecurring ? `${linkedRecurring} gasto${linkedRecurring === 1 ? "" : "s"} planejado${linkedRecurring === 1 ? "" : "s"}` : ""].filter(Boolean).join(" e ");
+            globalThis.alert(`Este cartão tem ${links} vinculado${linked + linkedRecurring === 1 ? "" : "s"}. Exclua ou mova esses lançamentos antes.`);
             return;
           }
           setCreditCards((items) => items.filter((item) => item.id !== editingCard.id));
@@ -1192,6 +1226,7 @@ Antes de responder, confira silenciosamente:
       <RecurringModal
         visible={modal === "recurring"}
         wallets={wallets}
+        cards={creditCards}
         item={editingRecurring}
         onClose={() => { setModal(null); setEditingRecurring(null); }}
         onSave={(item) => {
@@ -1324,10 +1359,10 @@ Antes de responder, confira silenciosamente:
   );
 }
 
-function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, monthlyExpenses, financialSettings, salaryCycle, cycleInvoices, cycleCashBills, freeToSpend, creditCards, entries, wallets, analysis, analyzing, hasGoal, onAnalyze, onAdd, onEditEntry, onConfigureCycle }: {
+function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, monthlyExpenses, financialSettings, salaryCycle, cycleInvoices, cycleCashBills, cyclePlannedCardBills, freeToSpend, creditCards, entries, wallets, analysis, analyzing, hasGoal, onAnalyze, onAdd, onEditEntry, onConfigureCycle }: {
   userName: string;
   balance: number; savedAmount: number; recurringTotal: number; monthlyIncome: number; monthlyExpenses: number; entries: Entry[]; wallets: Wallet[];
-  financialSettings: FinancialSettings; salaryCycle: { start: Date; end: Date }; cycleInvoices: CardInvoice[]; cycleCashBills: number; freeToSpend: number; creditCards: CreditCard[];
+  financialSettings: FinancialSettings; salaryCycle: { start: Date; end: Date }; cycleInvoices: CardInvoice[]; cycleCashBills: number; cyclePlannedCardBills: number; freeToSpend: number; creditCards: CreditCard[];
   analysis: AiAnalysis | null; analyzing: boolean; hasGoal: boolean; onAnalyze: () => void;
   onAdd: () => void; onEditEntry: (entry: Entry) => void; onConfigureCycle: () => void;
 }) {
@@ -1406,6 +1441,7 @@ function Home({ userName, balance, savedAmount, recurringTotal, monthlyIncome, m
       <View style={styles.salaryCycleBreakdown}>
         <View style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>Entradas planejadas</Text><Text style={styles.salaryCycleIncome}>+ {money(financialSettings.projectedMonthlyIncome)}</Text></View>
         <View style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>{cycleInvoices.length === 1 ? "Próxima fatura" : `${cycleInvoices.length} próximas faturas`}</Text><Text style={styles.salaryCycleExpense}>− {money(cycleInvoiceTotal)}</Text></View>
+        {cyclePlannedCardBills > 0 && <View style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>Planejados no cartão</Text><Text style={styles.salaryCycleExpense}>− {money(cyclePlannedCardBills)}</Text></View>}
         <View style={styles.salaryCycleLine}><Text style={styles.salaryCycleLineLabel}>Contas em dinheiro</Text><Text style={styles.salaryCycleExpense}>− {money(cycleCashBills)}</Text></View>
       </View>
     </> : <Pressable style={styles.salaryCycleEmpty} onPress={onConfigureCycle}><Text style={styles.salaryCycleEmptyText}>Cadastre uma entrada mensal em Planejados para ativar a projeção.</Text><Feather name="arrow-right" size={15} color={COLORS.lime} /></Pressable>}
@@ -1599,7 +1635,7 @@ function Movements({ entries, wallets, cards, onAdd, onEdit }: { entries: Entry[
   );
 }
 
-function RecurringList({ items, wallets, onAdd, onEdit, onToggle, onPay }: { items: Recurring[]; wallets: Wallet[]; onAdd: () => void; onEdit: (item: Recurring) => void; onToggle: (id: string) => void; onPay: (item: Recurring, monthKey: string) => void }) {
+function RecurringList({ items, wallets, cards, onAdd, onEdit, onToggle, onPay }: { items: Recurring[]; wallets: Wallet[]; cards: CreditCard[]; onAdd: () => void; onEdit: (item: Recurring) => void; onToggle: (id: string) => void; onPay: (item: Recurring, monthKey: string) => void }) {
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const date = new Date();
     return new Date(date.getFullYear(), date.getMonth(), 1);
@@ -1638,20 +1674,21 @@ function RecurringList({ items, wallets, onAdd, onEdit, onToggle, onPay }: { ite
 
       <SectionTitle title="Contas do mês" />
       {bills.length ? bills.map(item => {
-        const paid = item.paidMonths?.includes(monthKey) ?? false;
+        const card = item.cardId ? cards.find((value) => value.id === item.cardId) : undefined;
+        const paid = card ? item.postedMonths?.includes(monthKey) ?? false : item.paidMonths?.includes(monthKey) ?? false;
         return (
           <View key={item.id} style={[styles.billCard, !item.active && styles.disabledRow]}>
             <View style={styles.billMain}>
               <View style={styles.dateBadge}><Text style={styles.dateSmall}>DIA</Text><Text style={styles.dateBig}>{item.day}</Text></View>
-              <View style={styles.flex}><Text style={styles.rowTitle}>{item.title}</Text><Text style={styles.rowMeta}>{item.category} · {wallets.find(wallet => wallet.id === item.walletId)?.name ?? wallets[0]?.name ?? "Carteira"}</Text></View>
-              <View style={paid ? styles.paidBadge : styles.pendingBadge}><Text style={paid ? styles.paidBadgeText : styles.pendingBadgeText}>{paid ? "Paga" : "Pendente"}</Text></View>
+              <View style={styles.flex}><Text style={styles.rowTitle}>{item.title}</Text><Text style={styles.rowMeta}>{item.category} · {card?.name ?? wallets.find(wallet => wallet.id === item.walletId)?.name ?? wallets[0]?.name ?? "Carteira"}</Text></View>
+              <View style={paid ? styles.paidBadge : styles.pendingBadge}><Text style={paid ? styles.paidBadgeText : styles.pendingBadgeText}>{paid ? card ? "Na fatura" : "Paga" : "Pendente"}</Text></View>
               <Pressable style={styles.editRecurringButton} onPress={() => onEdit(item)} accessibilityLabel={`Editar ${item.title}`}><Feather name="edit-2" size={15} color={COLORS.grape} /></Pressable>
             </View>
             <View style={styles.billFooter}>
               <Text style={styles.billValue}>{money(item.value)}</Text>
               <View style={styles.billActions}>
                 <Pressable style={styles.pauseButton} onPress={() => onToggle(item.id)}><Feather name={item.active ? "pause" : "play"} size={13} color={COLORS.grape} /><Text style={styles.pauseButtonText}>{item.active ? "Pausar" : "Ativar"}</Text></Pressable>
-                {!paid && item.active && <Pressable style={styles.payButton} onPress={() => onPay(item, monthKey)}><Feather name="check" size={14} color="white" /><Text style={styles.payButtonText}>Pagar conta</Text></Pressable>}
+                {!paid && item.active && <Pressable style={styles.payButton} onPress={() => onPay(item, monthKey)}><Feather name={card ? "credit-card" : "check"} size={14} color="white" /><Text style={styles.payButtonText}>{card ? "Lançar no cartão" : "Pagar conta"}</Text></Pressable>}
               </View>
             </View>
           </View>
@@ -1864,7 +1901,8 @@ function EntryModal({ visible, wallets, cards, item, onClose, onSave, onDelete }
   const [kind, setKind] = useState<EntryKind>("expense"); const [title, setTitle] = useState(""); const [value, setValue] = useState(""); const [category, setCategory] = useState(expenseCategories[0]!); const [walletId, setWalletId] = useState(wallets[0]?.id ?? "");
   const [paymentSource, setPaymentSource] = useState<"wallet" | "card">("wallet");
   const [cardId, setCardId] = useState(cards[0]?.id ?? "");
-  const [installmentCount, setInstallmentCount] = useState("1");
+  const [currentInstallment, setCurrentInstallment] = useState("1");
+  const [remainingInstallments, setRemainingInstallments] = useState("1");
   const [referenceMonth, setReferenceMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
   const [referenceDay, setReferenceDay] = useState(String(today.getDate()));
   const activeCategories = categoriesByKind[kind];
@@ -1898,22 +1936,29 @@ function EntryModal({ visible, wallets, cards, item, onClose, onSave, onDelete }
     setWalletId(item?.walletId ?? wallets[0]?.id ?? "");
     setPaymentSource(item?.cardId ? "card" : "wallet");
     setCardId(item?.cardId ?? cards[0]?.id ?? "");
-    setInstallmentCount(String(item?.installmentTotal ?? 1));
+    setCurrentInstallment(String(item?.installmentNumber ?? 1));
+    setRemainingInstallments(String(item?.installmentNumber && item?.installmentTotal ? item.installmentTotal - item.installmentNumber + 1 : 1));
     setReferenceMonth(new Date(itemDate.getFullYear(), itemDate.getMonth(), 1));
     setReferenceDay(String(itemDate.getDate()));
   }, [visible, item, wallets, cards]);
   const changeKind = (nextKind: EntryKind) => { setKind(nextKind); if (nextKind === "income") setPaymentSource("wallet"); setCategory((current) => categoriesByKind[nextKind].includes(current) ? current : categoriesByKind[nextKind][0]!); };
   const selectedCard = cards.find((card) => card.id === cardId);
-  const parsedInstallmentCount = Number(installmentCount);
+  const parsedCurrentInstallment = Number(currentInstallment);
+  const parsedRemainingInstallments = Number(remainingInstallments);
+  const parsedInstallmentTotal = parsedCurrentInstallment + parsedRemainingInstallments - 1;
   const installmentInputActive = kind === "expense" && paymentSource === "card" && !item;
-  const validInstallmentCount = !installmentInputActive || (Number.isInteger(parsedInstallmentCount) && parsedInstallmentCount >= 1 && parsedInstallmentCount <= 48);
+  const validInstallmentCount = !installmentInputActive || (
+    Number.isInteger(parsedCurrentInstallment) && parsedCurrentInstallment >= 1 &&
+    Number.isInteger(parsedRemainingInstallments) && parsedRemainingInstallments >= 1 &&
+    parsedInstallmentTotal <= 48
+  );
   const validPaymentSource = kind === "income" || paymentSource === "wallet" ? Boolean(walletId) : Boolean(selectedCard);
   const save = () => {
     const parsed = parseMoneyInput(value);
     if (!title.trim() || parsed <= 0 || !validPaymentSource || !validDate || !validInstallmentCount) return;
     const isCardPurchase = kind === "expense" && paymentSource === "card" && selectedCard;
     const dueDate = isCardPurchase ? getInvoiceDueDate(selectedCard, referenceDate).toISOString() : undefined;
-    onSave({ title: title.trim(), value: parsed, kind, category, walletId: isCardPurchase ? selectedCard.paymentWalletId : walletId, createdAt: referenceDate.toISOString(), cardId: isCardPurchase ? selectedCard.id : undefined, invoiceDueDate: dueDate, invoicePaymentKey: item?.invoicePaymentKey, installmentKey: item?.installmentKey, installmentNumber: item?.installmentNumber, installmentTotal: isCardPurchase && !item && parsedInstallmentCount > 1 ? parsedInstallmentCount : item?.installmentTotal, projectedInstallment: item?.projectedInstallment });
+    onSave({ title: title.trim(), value: parsed, kind, category, walletId: isCardPurchase ? selectedCard.paymentWalletId : walletId, createdAt: referenceDate.toISOString(), cardId: isCardPurchase ? selectedCard.id : undefined, invoiceDueDate: dueDate, invoicePaymentKey: item?.invoicePaymentKey, installmentKey: item?.installmentKey, installmentNumber: isCardPurchase && !item && parsedInstallmentTotal > 1 ? parsedCurrentInstallment : item?.installmentNumber, installmentTotal: isCardPurchase && !item && parsedInstallmentTotal > 1 ? parsedInstallmentTotal : item?.installmentTotal, projectedInstallment: item?.projectedInstallment });
   };
   return <Sheet visible={visible} title={item ? "Editar movimentação" : "Novo lançamento"} subtitle={item ? "Corrija os dados sem criar outro lançamento." : "Conta pra gente por onde o dinheiro passeou."} onClose={onClose}>
     <View style={styles.segment}><Pressable style={[styles.segmentItem, kind === "expense" && styles.segmentActive]} onPress={() => changeKind("expense")}><Text style={[styles.segmentText, kind === "expense" && styles.segmentActiveText]}>Gasto</Text></Pressable><Pressable style={[styles.segmentItem, kind === "income" && styles.segmentActive]} onPress={() => changeKind("income")}><Text style={[styles.segmentText, kind === "income" && styles.segmentActiveText]}>Entrada</Text></Pressable></View>
@@ -1939,9 +1984,10 @@ function EntryModal({ visible, wallets, cards, item, onClose, onSave, onDelete }
       <View style={styles.walletOptions}>{cards.map(card => <Pressable key={card.id} style={[styles.walletOption, cardId === card.id && styles.walletOptionActive]} onPress={() => setCardId(card.id)}><View style={[styles.colorDot, { backgroundColor: card.color }]} /><View style={styles.flex}><Text style={styles.walletOptionText}>{card.name}</Text><Text style={styles.cardOptionMeta}>Fecha dia {card.closingDay} · vence dia {card.dueDay}</Text></View>{cardId === card.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
       {!cards.length && <Text style={styles.dateError}>Crie um cartão em Carteiras antes de lançar uma compra no crédito.</Text>}
       {!item && <>
-        <Field label="Número de parcelas" value={installmentCount} onChange={setInstallmentCount} placeholder="1" keyboardType="number-pad" />
-        {!validInstallmentCount && <Text style={styles.dateError}>Informe de 1 a 48 parcelas.</Text>}
-        {validInstallmentCount && parsedInstallmentCount > 1 && parseMoneyInput(value) > 0 && <Text style={styles.installmentPreview}>{parsedInstallmentCount} parcelas de aproximadamente {money(parseMoneyInput(value) / parsedInstallmentCount)}. O valor informado é o total da compra.</Text>}
+        <Field label="Número desta parcela" value={currentInstallment} onChange={setCurrentInstallment} placeholder="1" keyboardType="number-pad" />
+        <Field label="Parcelas restantes (incluindo esta)" value={remainingInstallments} onChange={setRemainingInstallments} placeholder="1" keyboardType="number-pad" />
+        {!validInstallmentCount && <Text style={styles.dateError}>A parcela atual e as restantes devem formar um parcelamento de até 48 vezes.</Text>}
+        {validInstallmentCount && parsedRemainingInstallments > 1 && parseMoneyInput(value) > 0 && <Text style={styles.installmentPreview}>Este lançamento será a parcela {parsedCurrentInstallment}/{parsedInstallmentTotal}. O Nenero criará esta e mais {parsedRemainingInstallments - 1} {parsedRemainingInstallments - 1 === 1 ? "parcela futura" : "parcelas futuras"} de {money(parseMoneyInput(value))}.</Text>}
       </>}
       {selectedCard && <View style={styles.invoicePreview}><Feather name="calendar" size={15} color={COLORS.grape} /><Text style={styles.invoicePreviewText}>A primeira parcela entra na fatura de {getInvoiceDueDate(selectedCard, referenceDate).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}.</Text></View>}
     </>}
@@ -2019,8 +2065,10 @@ function FinancialSettingsModal({ visible, incomes, selectedIncomeId, onClose, o
   </Sheet>;
 }
 
-function RecurringModal({ visible, wallets, item, onClose, onSave, onDelete }: { visible: boolean; wallets: Wallet[]; item: Recurring | null; onClose: () => void; onSave: (item: Omit<Recurring, "id" | "active">) => void; onDelete?: () => void }) {
+function RecurringModal({ visible, wallets, cards, item, onClose, onSave, onDelete }: { visible: boolean; wallets: Wallet[]; cards: CreditCard[]; item: Recurring | null; onClose: () => void; onSave: (item: Omit<Recurring, "id" | "active">) => void; onDelete?: () => void }) {
   const [kind, setKind] = useState<EntryKind>("expense"); const [title, setTitle] = useState(""); const [value, setValue] = useState(""); const [day, setDay] = useState(""); const [category, setCategory] = useState("Casa"); const [walletId, setWalletId] = useState(wallets[0]?.id ?? "");
+  const [paymentSource, setPaymentSource] = useState<"wallet" | "card">("wallet");
+  const [cardId, setCardId] = useState(cards[0]?.id ?? "");
   const activeCategories = categoriesByKind[kind];
   useEffect(() => {
     if (!visible) return;
@@ -2032,12 +2080,17 @@ function RecurringModal({ visible, wallets, item, onClose, onSave, onDelete }: {
     setDay(item ? String(item.day) : "");
     setCategory(item?.category && itemCategories.includes(item.category) ? item.category : itemCategories[0]!);
     setWalletId(item?.walletId ?? wallets[0]?.id ?? "");
-  }, [visible, item, wallets]);
-  const changeKind = (nextKind: EntryKind) => { setKind(nextKind); setCategory((current) => categoriesByKind[nextKind].includes(current) ? current : categoriesByKind[nextKind][0]!); };
+    setPaymentSource(item?.cardId ? "card" : "wallet");
+    setCardId(item?.cardId ?? cards[0]?.id ?? "");
+  }, [visible, item, wallets, cards]);
+  const changeKind = (nextKind: EntryKind) => { setKind(nextKind); if (nextKind === "income") setPaymentSource("wallet"); setCategory((current) => categoriesByKind[nextKind].includes(current) ? current : categoriesByKind[nextKind][0]!); };
+  const selectedCard = cards.find((card) => card.id === cardId);
+  const validPaymentSource = kind === "income" || paymentSource === "wallet" ? Boolean(walletId) : Boolean(selectedCard);
   const save = () => {
     const parsed = parseMoneyInput(value); const parsedDay = Number(day);
-    if (title.trim() && parsed > 0 && parsedDay >= 1 && parsedDay <= 31 && walletId) {
-      onSave({ title: title.trim(), value: parsed, day: parsedDay, category, kind, walletId });
+    if (title.trim() && parsed > 0 && parsedDay >= 1 && parsedDay <= 31 && validPaymentSource) {
+      const isCardExpense = kind === "expense" && paymentSource === "card" && selectedCard;
+      onSave({ title: title.trim(), value: parsed, day: parsedDay, category, kind, walletId: isCardExpense ? selectedCard.paymentWalletId : walletId, cardId: isCardExpense ? selectedCard.id : undefined, lastPostedMonth: item?.lastPostedMonth, postedMonths: item?.postedMonths, paidMonths: item?.paidMonths, startDate: item?.startDate });
       setTitle(""); setValue(""); setDay("");
     }
   };
@@ -2051,10 +2104,10 @@ function RecurringModal({ visible, wallets, item, onClose, onSave, onDelete }: {
     <Field label={kind === "income" ? "Depositar em qual dia?" : "Vence em qual dia?"} value={day} onChange={setDay} placeholder="Ex.: 10" keyboardType="number-pad" />
     <Text style={styles.fieldLabel}>{kind === "income" ? "Tipo de entrada" : "Categoria"}</Text>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>{activeCategories.map(c => <CategoryChip key={c} category={c} kind={kind} selected={category === c} onPress={() => setCategory(c)} />)}</ScrollView>
-      <Text style={styles.fieldLabel}>{kind === "income" ? "Carteira que recebe" : "Carteira usada no pagamento"}</Text>
-      <View style={styles.walletOptions}>{wallets.map(wallet => <Pressable key={wallet.id} style={[styles.walletOption, walletId === wallet.id && styles.walletOptionActive]} onPress={() => setWalletId(wallet.id)}><View style={[styles.colorDot, { backgroundColor: wallet.color }]} /><Text style={styles.walletOptionText}>{wallet.name}</Text>{walletId === wallet.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>
+      {kind === "expense" && <><Text style={styles.fieldLabel}>Como será pago?</Text><View style={styles.segment}><Pressable style={[styles.segmentItem, paymentSource === "wallet" && styles.segmentActive]} onPress={() => setPaymentSource("wallet")}><Text style={[styles.segmentText, paymentSource === "wallet" && styles.segmentActiveText]}>Dinheiro / débito</Text></Pressable><Pressable style={[styles.segmentItem, paymentSource === "card" && styles.segmentActive]} onPress={() => setPaymentSource("card")}><Text style={[styles.segmentText, paymentSource === "card" && styles.segmentActiveText]}>Cartão de crédito</Text></Pressable></View></>}
+      {(kind === "income" || paymentSource === "wallet") ? <><Text style={styles.fieldLabel}>{kind === "income" ? "Carteira que recebe" : "Carteira usada no pagamento"}</Text><View style={styles.walletOptions}>{wallets.map(wallet => <Pressable key={wallet.id} style={[styles.walletOption, walletId === wallet.id && styles.walletOptionActive]} onPress={() => setWalletId(wallet.id)}><View style={[styles.colorDot, { backgroundColor: wallet.color }]} /><Text style={styles.walletOptionText}>{wallet.name}</Text>{walletId === wallet.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View></> : <><Text style={styles.fieldLabel}>Cartão</Text><View style={styles.walletOptions}>{cards.map(card => <Pressable key={card.id} style={[styles.walletOption, cardId === card.id && styles.walletOptionActive]} onPress={() => setCardId(card.id)}><View style={[styles.colorDot, { backgroundColor: card.color }]} /><View style={styles.flex}><Text style={styles.walletOptionText}>{card.name}</Text><Text style={styles.cardOptionMeta}>Fecha dia {card.closingDay} · vence dia {card.dueDay}</Text></View>{cardId === card.id && <Feather name="check" size={17} color={COLORS.grape} />}</Pressable>)}</View>{!cards.length && <Text style={styles.dateError}>Crie um cartão em Carteiras antes de planejar este gasto.</Text>}<View style={styles.autoPostNote}><Feather name="zap" size={16} color={COLORS.success} /><Text style={styles.autoPostText}>No dia programado, o gasto entrará automaticamente na fatura do cartão. O saldo da carteira só muda quando a fatura for paga.</Text></View></>}
       {kind === "income" && <View style={styles.autoPostNote}><Feather name="zap" size={16} color={COLORS.success} /><Text style={styles.autoPostText}>O valor será contabilizado na data programada, mesmo que o Nenero fique fechado naquele dia.</Text></View>}
-    <PrimaryButton label={item ? "Salvar alterações" : kind === "income" ? "Programar entrada" : "Salvar gasto fixo"} onPress={save} disabled={!title.trim() || !value || !day || !walletId} />
+    <PrimaryButton label={item ? "Salvar alterações" : kind === "income" ? "Programar entrada" : "Salvar gasto fixo"} onPress={save} disabled={!title.trim() || !value || !day || !validPaymentSource} />
     {item && onDelete && <Pressable style={styles.deleteEntryButton} onPress={onDelete}><Feather name="trash-2" size={17} color={COLORS.danger} /><Text style={styles.deleteEntryButtonText}>Excluir {item.kind === "income" ? "entrada planejada" : "gasto fixo"}</Text></Pressable>}
   </Sheet>;
 }
